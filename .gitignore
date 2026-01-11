@@ -1,0 +1,18 @@
+/target
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.DS_Store
+.vscode/
+.idea/
+
+# Project specific
+qr_login.png
+latest_qr.png
+debug_qr.png
+*.log

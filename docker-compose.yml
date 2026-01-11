@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7
+    container_name: xhs-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - xhs_mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: xhs_tools
+    restart: unless-stopped
+
+volumes:
+  xhs_mongo_data:
+    driver: local
