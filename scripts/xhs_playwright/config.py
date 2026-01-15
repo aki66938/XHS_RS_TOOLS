@@ -53,6 +53,9 @@ ENDPOINT_PATTERNS = {
     "note_page": "/api/sns/web/v2/comment/page",  # 图文详情（评论分页）
 }
 
+# QR Code status API (for XHR monitoring, not signature capture)
+QRCODE_STATUS_URL = "/api/sns/web/v1/login/qrcode/status"
+
 
 # Channel Mapping: Tab Name -> API Category ID
 # This ensures we wait for the EXACT correct response

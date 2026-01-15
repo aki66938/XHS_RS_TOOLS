@@ -53,6 +53,30 @@ def validate_session():
     except:
         return None
 
+def check_qrcode_status():
+    """检查二维码登录状态"""
+    try:
+        req = urllib.request.Request(f"{BASE_URL}/api/auth/qrcode-status")
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            if data.get("success") and data.get("data"):
+                return data["data"]
+            return None
+    except:
+        return None
+
+def check_capture_status():
+    """检查采集任务状态"""
+    try:
+        req = urllib.request.Request(f"{BASE_URL}/api/auth/capture-status")
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            if data.get("success") and data.get("data"):
+                return data["data"]
+            return None
+    except:
+        return None
+
 def login_interactive():
     """交互式登录流程"""
     print("启动登录会话...")
@@ -135,20 +159,69 @@ def login_interactive():
                     except Exception as e:
                         print(f"  >> 保存二维码图片失败: {e}")
                 
-                # Continue to wait for login
-                print("\n等待登录...", end="", flush=True)
+                # 阶段 1: 轮询 qrcode-status 等待登录成功
+                print("\n等待扫码", end="", flush=True)
                 start_time = time.time()
-                while time.time() - start_time < 120:
-                    user = validate_session()
-                    if user:
-                        print(f"\n\n✅ 登录成功！")
-                        print(f"   用户: {user.get('nickname')} (ID: {user.get('red_id')})")
-                        return True
-                    print(".", end="", flush=True)
-                    time.sleep(2)
+                timeout = 120
+                login_success = False
                 
-                print("\n❌ 登录超时")
-                return False
+                while time.time() - start_time < timeout:
+                    qr_status = check_qrcode_status()
+                    if qr_status:
+                        code_status = qr_status.get("code_status", -1)
+                        if code_status == 2:  # 登录成功
+                            login_info = qr_status.get("login_info", {})
+                            print(f"\n\n✅ 登录成功！")
+                            print(f"   User ID: {login_info.get('user_id', 'N/A')}")
+                            login_success = True
+                            break
+                        elif code_status == 1:  # 已扫码
+                            print("✓", end="", flush=True)
+                        else:  # 未扫码
+                            print(".", end="", flush=True)
+                    else:
+                        print(".", end="", flush=True)
+                    time.sleep(1)
+                
+                if not login_success:
+                    print("\n❌ 登录超时")
+                    return False
+                
+                # 阶段 2: 等待采集完成（无限轮询直到服务端返回完成）
+                print("\n等待签名采集", end="", flush=True)
+                
+                while True:
+                    capture = check_capture_status()
+                    if capture:
+                        if capture.get("is_complete"):
+                            count = capture.get("total_count", 0)
+                            message = capture.get("message", "")
+                            
+                            if count > 0:
+                                # 采集成功
+                                print(f"\n\n✅ 采集完成！")
+                                print(f"   签名数量: {count}")
+                                print(f"   已采集: {', '.join(capture.get('signatures_captured', []))}")
+                                
+                                # 阶段 3: 获取用户信息
+                                user = validate_session()
+                                if user:
+                                    print(f"   用户: {user.get('nickname')} (ID: {user.get('red_id')})")
+                                return True
+                            else:
+                                # 采集失败 (total_count == 0)
+                                print(f"\n\n❌ 采集失败！")
+                                print(f"   原因: {message}")
+                                return False
+                        # 显示当前采集进度
+                        current_count = capture.get("total_count", 0)
+                        if current_count > 0:
+                            print(f"({current_count})", end="", flush=True)
+                        else:
+                            print(".", end="", flush=True)
+                    else:
+                        print(".", end="", flush=True)
+                    time.sleep(2)
             else:
                 print(f"❌ API错误: {data}")
                 return False

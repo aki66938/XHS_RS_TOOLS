@@ -36,10 +36,31 @@ pub struct QrCodeCreateResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(example = json!({
-    "code_status": 3
+    "session": "040069b948b3ed3fc37f584f5c3b4b8b909397",
+    "secure_session": "X6b2acsession.040069b948b3ed3fc37f584f5c3b4b8b909397",
+    "user_id": "683cf0a5000000001b019329"
+}))]
+pub struct LoginInfo {
+    pub session: String,
+    pub secure_session: String,
+    pub user_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "code_status": 2,
+    "login_info": {
+        "session": "040069b948b3ed3fc37f584f5c3b4b8b909397",
+        "secure_session": "X6b2acsession.040069b948b3ed3fc37f584f5c3b4b8b909397",
+        "user_id": "683cf0a5000000001b019329"
+    }
 }))]
 pub struct QrCodeStatusData {
+    /// 状态码: 0=未扫码, 1=已扫码等待确认, 2=登录成功
     pub code_status: i32,
+    /// 登录成功时返回的登录信息
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub login_info: Option<LoginInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -48,7 +69,12 @@ pub struct QrCodeStatusData {
     "success": true,
     "msg": "成功",
     "data": {
-        "code_status": 3
+        "code_status": 2,
+        "login_info": {
+            "session": "040069b948b3ed3fc37f584f5c3b4b8b909397",
+            "secure_session": "X6b2acsession.040069b948b3ed3fc37f584f5c3b4b8b909397",
+            "user_id": "683cf0a5000000001b019329"
+        }
     }
 }))]
 pub struct QrCodeStatusResponse {
@@ -120,4 +146,43 @@ pub struct SessionInfoData {
     pub x_s_common: String,
     pub created_at: String,
     pub is_valid: bool,
+}
+
+/// 采集状态数据
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "is_complete": true,
+    "signatures_captured": ["user_me", "home_feed_recommend", "search_trending"],
+    "total_count": 16,
+    "message": "采集完成"
+}))]
+pub struct CaptureStatusData {
+    /// 是否采集完成
+    pub is_complete: bool,
+    /// 已采集的签名列表
+    pub signatures_captured: Vec<String>,
+    /// 已采集签名数量
+    pub total_count: usize,
+    /// 状态消息
+    pub message: String,
+}
+
+/// 采集状态响应
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "code": 0,
+    "success": true,
+    "msg": "成功",
+    "data": {
+        "is_complete": true,
+        "signatures_captured": ["user_me", "home_feed_recommend"],
+        "total_count": 16,
+        "message": "采集完成"
+    }
+}))]
+pub struct CaptureStatusResponse {
+    pub code: i32,
+    pub success: bool,
+    pub msg: String,
+    pub data: Option<CaptureStatusData>,
 }

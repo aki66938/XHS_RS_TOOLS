@@ -96,12 +96,14 @@ pub async fn check_qrcode_status(client: &XhsClient, auth: &Arc<AuthService>, qr
     Ok(result)
 }
 
-
-pub async fn start_login_session() -> Result<crate::models::login::QrCodeSessionResponse> {
+pub async fn start_login_session(
+    qrcode_status: std::sync::Arc<tokio::sync::RwLock<Option<crate::models::login::QrCodeStatusData>>>,
+    capture_status: std::sync::Arc<tokio::sync::RwLock<Option<crate::models::login::CaptureStatusData>>>
+) -> Result<crate::models::login::QrCodeSessionResponse> {
     use tokio::process::Command;
     use std::process::Stdio;
     use tokio::io::{BufReader, AsyncBufReadExt};
-    use crate::models::login::QrCodeSessionResponse;
+    use crate::models::login::{QrCodeSessionResponse, QrCodeStatusData, LoginInfo, CaptureStatusData};
 
     tracing::info!("Starting Python login session...");
 
@@ -144,22 +146,111 @@ pub async fn start_login_session() -> Result<crate::models::login::QrCodeSession
     
     // Spawn background task to monitor the rest of the session
     tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        
         tracing::info!("Login session background task started (PID: {:?})", child.id());
         
+        // Use byte buffer for robust reading (handles non-UTF8 gracefully)
+        let mut buffer = vec![0u8; 4096];
+        let mut accumulated = Vec::new();
+        
         loop {
-            line.clear();
-            match reader.read_line(&mut line).await {
+            match reader.read(&mut buffer).await {
                 Ok(0) => break, // EOF
-                Ok(_) => {
-                    let trimmed = line.trim();
-                    if !trimmed.is_empty() {
-                        tracing::info!("Session Update: {}", trimmed);
+                Ok(n) => {
+                    accumulated.extend_from_slice(&buffer[..n]);
+                    
+                    // Process complete lines
+                    while let Some(pos) = accumulated.iter().position(|&b| b == b'\n') {
+                        let line_bytes: Vec<u8> = accumulated.drain(..=pos).collect();
+                        // Convert to string with lossy UTF-8 handling
+                        let line = String::from_utf8_lossy(&line_bytes);
+                        let trimmed = line.trim();
+                        if !trimmed.is_empty() {
+                            tracing::info!("Session Update: {}", trimmed);
+                            
+                            // 尝试解析 qrcode_status JSON 并更新共享状态
+                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                                if json.get("step").and_then(|s| s.as_str()) == Some("qrcode_status") {
+                                    if let Some(data) = json.get("data") {
+                                        let code_status = data.get("code_status")
+                                            .and_then(|c| c.as_i64())
+                                            .unwrap_or(-1) as i32;
+                                        
+                                        let login_info = data.get("login_info").and_then(|info| {
+                                            Some(LoginInfo {
+                                                session: info.get("session")?.as_str()?.to_string(),
+                                                secure_session: info.get("secure_session")?.as_str()?.to_string(),
+                                                user_id: info.get("user_id")?.as_str()?.to_string(),
+                                            })
+                                        });
+                                        
+                                        // 更新共享状态
+                                        let mut status = qrcode_status.write().await;
+                                        *status = Some(QrCodeStatusData {
+                                            code_status,
+                                            login_info,
+                                        });
+                                        tracing::info!("QR Status updated: code_status={}", code_status);
+                                    }
+                                }
+                            
+                                // 解析 signatures_captured (采集完成信息)
+                                if let Some(signatures) = json.get("signatures_captured") {
+                                    if let Some(arr) = signatures.as_array() {
+                                        let captured: Vec<String> = arr
+                                            .iter()
+                                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                            .collect();
+                                        let count = captured.len();
+                                        
+                                        // 更新采集状态
+                                        let mut status = capture_status.write().await;
+                                        *status = Some(CaptureStatusData {
+                                            is_complete: true,
+                                            signatures_captured: captured.clone(),
+                                            total_count: count,
+                                            message: format!("采集完成，共 {} 个签名", count),
+                                        });
+                                        tracing::info!("Capture Status updated: {} signatures captured", count);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 Err(e) => {
                     tracing::error!("Error reading script output: {}", e);
                     break;
                 }
+            }
+        }
+        
+        // Process any remaining data
+        if !accumulated.is_empty() {
+            let line = String::from_utf8_lossy(&accumulated);
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                tracing::info!("Session Update: {}", trimmed);
+            }
+        }
+        
+        // 无论成功还是失败，进程退出后标记采集完成
+        {
+            let mut status = capture_status.write().await;
+            if let Some(ref mut data) = *status {
+                if !data.is_complete {
+                    data.is_complete = true;
+                    data.message = "采集流程已结束".to_string();
+                    tracing::info!("Capture marked as complete (process exited)");
+                }
+            } else {
+                *status = Some(CaptureStatusData {
+                    is_complete: true,
+                    signatures_captured: vec![],
+                    total_count: 0,
+                    message: "采集流程异常结束".to_string(),
+                });
             }
         }
         

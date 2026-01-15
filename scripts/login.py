@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 XHS Login Script - Main Entry Point
 
@@ -10,6 +11,14 @@ Supports:
 """
 
 import sys
+import io
+
+# Force UTF-8 encoding for stdout/stderr on Windows
+# This ensures Rust can properly read the output
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 import json
 import asyncio
 import argparse
@@ -30,6 +39,7 @@ from xhs_playwright.browser import (
     traverse_feed_channels,
     trigger_notification_signatures,
     trigger_note_page_signature,
+    QrCodeStatusMonitor,
 )
 from xhs_playwright.qr_code import extract_from_page, base64_to_ascii
 
@@ -77,9 +87,13 @@ async def run_full_login(headless: bool = False, json_mode: bool = False) -> dic
         page = await context.new_page()
         await setup_anti_detection(page)
         
-        # Set up signature capture
+        # Set up signature capture (request)
         sig_capture = SignatureCapture()
         page.on("request", sig_capture.create_request_handler())
+        
+        # Set up QR status monitoring (response)
+        qr_monitor = QrCodeStatusMonitor()
+        page.on("response", qr_monitor.create_response_handler())
         
         # Navigate and show login
         if not await navigate_to_login(page):
@@ -124,11 +138,25 @@ async def run_full_login(headless: bool = False, json_mode: bool = False) -> dic
         if not json_mode:
             print("\n\n✅ 登录成功！")
         
+        # Output QR status with login_info if available (from XHR monitoring)
+        if json_mode and qr_monitor.is_logged_in():
+            # 输出二维码状态接口返回的完整信息
+            qr_status_response = qr_monitor.get_full_response()
+            print(json.dumps({
+                "success": True,
+                "step": "qrcode_status",
+                "data": qr_status_response.get("data", {})
+            }), flush=True)
+        
         # [PRIORITY FIX] Save credentials IMMEDIATELY after login
         # This ensures the session is usable even if signature capture fails later
         cookies = login_result["cookies"]
         # x_s_common might be captured during login flow, or empty initially
         user_id = save_credentials(cookies, sig_capture.x_s_common)
+        
+        # Use user_id from qr_monitor.login_info if available
+        if qr_monitor.login_info:
+            result["login_info"] = qr_monitor.login_info
         
         if not json_mode:
             print(f"[Login] 凭证已保存 (User ID: {user_id})")

@@ -5,6 +5,7 @@ use axum::{
     Json, Router,
 };
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -14,7 +15,7 @@ use crate::{
     client::XhsClient,
     models::{
         feed::{HomefeedRequest, HomefeedResponse, HomefeedData, HomefeedItem, NoteCard, NoteUser, NoteCover, CoverImageInfo, InteractInfo, NoteVideo, VideoCapa},
-        login::{QrCodeSessionResponse, SessionInfoResponse, SessionInfoData, CookieInfo},
+        login::{QrCodeSessionResponse, SessionInfoResponse, SessionInfoData, CookieInfo, QrCodeStatusResponse, QrCodeStatusData, LoginInfo, CaptureStatusData, CaptureStatusResponse},
         search::{QueryTrendingResponse, QueryTrendingData, TrendingQuery, TrendingHintWord},
         user::{UserMeResponse, UserInfo},
     },
@@ -27,6 +28,8 @@ use crate::{
         user_me_handler,
         start_login_session_handler,
         get_session_handler,
+        get_qrcode_status_handler,
+        get_capture_status_handler,
         api::feed::category::get_category_feed,
         api::note::page::get_note_page,
         mentions_handler,
@@ -35,6 +38,8 @@ use crate::{
     components(
         schemas(
             QrCodeSessionResponse, SessionInfoResponse, SessionInfoData, CookieInfo,
+            QrCodeStatusResponse, QrCodeStatusData, LoginInfo,
+            CaptureStatusData, CaptureStatusResponse,
             QueryTrendingResponse, QueryTrendingData, TrendingQuery, TrendingHintWord,
             UserMeResponse, UserInfo,
             HomefeedRequest, HomefeedResponse, HomefeedData, HomefeedItem, NoteCard, NoteUser, NoteCover, CoverImageInfo, InteractInfo, NoteVideo, VideoCapa
@@ -52,8 +57,11 @@ struct ApiDoc;
 pub struct AppState {
     pub api: XhsApiClient,
     pub auth: Arc<AuthService>,
+    /// 共享的二维码登录状态（由 Python 脚本更新）
+    pub qrcode_status: Arc<RwLock<Option<QrCodeStatusData>>>,
+    /// 共享的采集状态（由 Python 脚本更新）
+    pub capture_status: Arc<RwLock<Option<CaptureStatusData>>>,
 }
-
 
 
 /// 猜你想搜
@@ -148,8 +156,33 @@ async fn homefeed_recommend_handler(
         (status = 200, description = "Login Session Stream (JSON Lines)", body = QrCodeSessionResponse)
     )
 )]
-async fn start_login_session_handler() -> impl IntoResponse {
-    match api::login::start_login_session().await {
+async fn start_login_session_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    // 重置 qrcode_status 状态
+    {
+        let mut status = state.qrcode_status.write().await;
+        *status = Some(QrCodeStatusData {
+            code_status: 0,  // 初始状态：未扫码
+            login_info: None,
+        });
+    }
+    
+    // 重置 capture_status 状态
+    {
+        let mut status = state.capture_status.write().await;
+        *status = Some(CaptureStatusData {
+            is_complete: false,
+            signatures_captured: vec![],
+            total_count: 0,
+            message: "采集中...".to_string(),
+        });
+    }
+    
+    match api::login::start_login_session(
+        state.qrcode_status.clone(),
+        state.capture_status.clone()
+    ).await {
         Ok(res) => Json(res).into_response(),
         Err(e) => Json(serde_json::json!({
             "success": false,
@@ -180,6 +213,82 @@ async fn get_session_handler(
             "msg": e.to_string(),
             "data": null
         })).into_response(),
+    }
+}
+
+/// 获取二维码登录状态
+///
+/// 轮询此接口获取扫码状态:
+/// - code_status=0: 未扫码
+/// - code_status=1: 已扫码，等待确认
+/// - code_status=2: 登录成功 (包含 login_info)
+#[utoipa::path(
+    get,
+    path = "/api/auth/qrcode-status",
+    tag = "auth",
+    summary = "获取二维码登录状态",
+    responses(
+        (status = 200, description = "二维码登录状态", body = QrCodeStatusResponse)
+    )
+)]
+async fn get_qrcode_status_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let status = state.qrcode_status.read().await;
+    match status.as_ref() {
+        Some(data) => Json(QrCodeStatusResponse {
+            code: 0,
+            success: true,
+            msg: "成功".to_string(),
+            data: Some(data.clone()),
+        }).into_response(),
+        None => Json(QrCodeStatusResponse {
+            code: 0,
+            success: true,
+            msg: "等待扫码".to_string(),
+            data: Some(QrCodeStatusData {
+                code_status: -1,  // -1 表示登录流程未开始
+                login_info: None,
+            }),
+        }).into_response(),
+    }
+}
+
+/// 获取采集任务状态
+///
+/// 轮询此接口检查 Playwright 签名采集是否完成。
+/// 只有 is_complete=true 时，才能安全调用其他需要签名的 API。
+#[utoipa::path(
+    get,
+    path = "/api/auth/capture-status",
+    tag = "auth",
+    summary = "获取采集任务状态",
+    responses(
+        (status = 200, description = "采集任务状态", body = CaptureStatusResponse)
+    )
+)]
+async fn get_capture_status_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let status = state.capture_status.read().await;
+    match status.as_ref() {
+        Some(data) => Json(CaptureStatusResponse {
+            code: 0,
+            success: true,
+            msg: "成功".to_string(),
+            data: Some(data.clone()),
+        }).into_response(),
+        None => Json(CaptureStatusResponse {
+            code: 0,
+            success: true,
+            msg: "采集未开始".to_string(),
+            data: Some(CaptureStatusData {
+                is_complete: false,
+                signatures_captured: vec![],
+                total_count: 0,
+                message: "等待登录流程启动".to_string(),
+            }),
+        }).into_response(),
     }
 }
 
@@ -245,7 +354,12 @@ pub async fn start_server() -> anyhow::Result<()> {
     
     let client = XhsClient::new()?;
     let api = XhsApiClient::new(client, auth.clone());
-    let state = Arc::new(AppState { api, auth });
+    
+    // 初始化共享状态
+    let qrcode_status = Arc::new(RwLock::new(None));
+    let capture_status = Arc::new(RwLock::new(None));
+    
+    let state = Arc::new(AppState { api, auth, qrcode_status, capture_status });
 
     let app = Router::new()
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
@@ -258,6 +372,8 @@ pub async fn start_server() -> anyhow::Result<()> {
         .route("/api/notification/connections", get(connections_handler))
         .route("/api/auth/login-session", post(start_login_session_handler))
         .route("/api/auth/session", get(get_session_handler))
+        .route("/api/auth/qrcode-status", get(get_qrcode_status_handler))
+        .route("/api/auth/capture-status", get(get_capture_status_handler))
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state);
 

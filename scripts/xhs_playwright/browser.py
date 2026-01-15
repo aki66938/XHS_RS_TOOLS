@@ -2,6 +2,7 @@
 Playwright browser management for XHS automation
 """
 
+import json
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
 from .config import (
@@ -15,7 +16,63 @@ from .config import (
     LOGIN_TIMEOUT_SECONDS,
     FEED_CHANNELS,
     ENDPOINT_PATTERNS,
+    QRCODE_STATUS_URL,
 )
+
+
+class QrCodeStatusMonitor:
+    """
+    监听二维码登录状态的 XHR response。
+    
+    状态码:
+        0 - 未扫码
+        1 - 已扫码，等待确认
+        2 - 登录成功 (包含 login_info)
+    """
+    
+    def __init__(self):
+        self.latest_status = None
+        self.login_info = None
+        self._status_history = []
+    
+    def create_response_handler(self):
+        """创建 response 事件处理器"""
+        async def handler(response):
+            try:
+                if QRCODE_STATUS_URL in response.url and response.status == 200:
+                    data = await response.json()
+                    if data.get("success") and "data" in data:
+                        status_data = data["data"]
+                        code_status = status_data.get("code_status")
+                        
+                        self.latest_status = data  # 保存完整响应
+                        self._status_history.append(code_status)
+                        
+                        # 登录成功时保存 login_info
+                        if code_status == 2 and "login_info" in status_data:
+                            self.login_info = status_data["login_info"]
+                            print(f"[QR Monitor] 登录成功! user_id: {self.login_info.get('user_id')}")
+                        elif code_status == 1:
+                            print("[QR Monitor] 已扫码，等待确认...")
+            except Exception as e:
+                # 忽略 JSON 解析错误等
+                pass
+        return handler
+    
+    def get_code_status(self) -> int:
+        """获取当前状态码"""
+        if self.latest_status:
+            return self.latest_status.get("data", {}).get("code_status", -1)
+        return -1
+    
+    def is_logged_in(self) -> bool:
+        """检查是否登录成功"""
+        return self.get_code_status() == 2
+    
+    def get_full_response(self) -> dict:
+        """获取完整的最新响应（全量返回）"""
+        return self.latest_status or {"code": -1, "success": False, "msg": "未获取到状态"}
+
 
 
 async def create_browser_context(
@@ -265,54 +322,42 @@ async def traverse_feed_channels(page: Page):
         if not target_category:
             continue
 
-        print(f"  -> [{channel}] 准备采集 (目标: {target_category})")
+        print(f"  -> [{channel}] 准备采集 (目标: {target_category})", flush=True)
         
         try:
             # Locate tab
             tab = page.get_by_text(channel, exact=True).first
             if not await tab.is_visible():
-                print(f"     ⚠️ 找不到频道: {channel}")
+                print(f"     ⚠️ 找不到频道: {channel}", flush=True)
                 continue
 
-            # Define predicate for expected response
-            # Must match: URL endpoint + POST method + Status 200 + Category in payload(implied by response context or request)
-            # Actually, to be strict, we should check REQUEST payload.
-            # But response object has .request property.
-            def response_predicate(response):
-                if ENDPOINT_PATTERNS["home_feed"] not in response.url:
-                    return False
-                if response.status != 200:
-                    return False
-                if response.request.method != "POST":
-                    return False
-                
-                # Deep inspect request payload
-                try:
-                    post_data = response.request.post_data
-                    if not post_data: return False
-                    data = json.loads(post_data)
-                    return data.get("category") == target_category
-                except:
-                    return False
-
-            # Click and Wait with race condition handling
-            # We start waiting BEFORE clicking to avoid missing fast responses
-            async with page.expect_response(response_predicate, timeout=8000) as response_info:
-                await tab.click()
-                # Optional: scroll a bit to ensure activity? No, click is enough to trigger.
+            # Click the tab
+            await tab.click()
             
-            print(f"     ✅ 成功捕获签名: {channel}")
+            # Wait for network request (给足够时间让 API 请求触发)
+            await page.wait_for_timeout(2000)
             
-            # Human Delay (2-4s)
-            delay = random.uniform(2000, 4000)
+            # Scroll to trigger more content loading
+            await page.mouse.wheel(0, 500)
+            await page.wait_for_timeout(1000)
+            
+            # Wait for network idle
+            try:
+                await page.wait_for_load_state("networkidle", timeout=5000)
+            except:
+                pass
+            
+            print(f"     ✅ 成功捕获签名: {channel}", flush=True)
+            
+            # Human Delay (1-2s)
+            delay = random.uniform(1000, 2000)
             await page.wait_for_timeout(delay)
 
         except Exception as e:
-            print(f"     ❌ 采集失败 {channel}: {e}")
-            # Retry logic could go here, but keep it simple for now
+            print(f"     ❌ 采集失败 {channel}: {e}", flush=True)
             pass
             
-    print("[Browser] 频道遍历完成\n")
+    print("[Browser] 频道遍历完成\n", flush=True)
 
 
 async def trigger_notification_signatures(page: Page):

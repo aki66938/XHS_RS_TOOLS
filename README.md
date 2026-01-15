@@ -1,4 +1,4 @@
-# XHS-Reverse-Rust
+# XHS-RS-TOOLS
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Language](https://img.shields.io/badge/language-Rust%20%7C%20Python-orange.svg)
@@ -27,22 +27,29 @@
 3.  **持久化会话**: 将 (Cookie + Header + Signature + Payload) 作为一个原子单元存储。
 4.  **服务端重放**: Rust 后端通过 API 暴露这些能力。当客户端请求某个接口时，后端会**强制使用**数据库中存储的、已通过验证的 Payload 和签名进行请求，从而完美规避反爬策略。
 
-## 🚀 当前功能 (v1.1.0)
+## 🚀 当前功能 (v1.2.0)
 
 以下均为目前已实现并验证的功能：
 
 *   **二维码扫码登录**: 从 DOM 中获取二维码图片信息，可以直接复制到浏览器展示，也可以客户端自行实现在控制台显示 ASCII 二维码。
+*   **实时登录状态查询** (NEW): 通过 `/api/auth/qrcode-status` 轮询扫码状态（未扫码/已扫码/登录成功）。
+*   **签名采集进度查询** (NEW): 通过 `/api/auth/capture-status` 查询后台签名采集是否完成。
 *   **会话持久化**: 登录成功后自动保存 Session，支持长时间复用（具体失效时间不可保证），无需频繁扫码。
 *   **全频道 Feed 采集**: 支持首页推荐及所有子频道（穿搭、美食、情感、游戏等 11 个频道）的数据获取。
     *   *特色*: 采用拟人化遍历算法，精准捕获各频道专属签名。
 *   **热搜榜单**: 获取实时热搜关键词。
-*   **通知页采集** (NEW): 获取评论和 @ 、新增关注通知。
-*   **图文详情** (NEW): 获取指定笔记的评论列表，支持分页。
+*   **通知页采集**: 获取评论和 @ 、新增关注通知。
+*   **图文详情**: 获取指定笔记的评论列表，支持分页。
 
 ## 📅 开发日志 (Dev Log)
 
 | 版本 | 日期 | 更新内容 | 备注 |
 | :--- | :--- | :--- | :--- |
+| **v1.2.0** | 2026-01-16 | **新增端点与代码优化** | |
+| | | - 🎉 新增 `/api/auth/qrcode-status` | 实时查询扫码登录状态 (0:未扫码/1:已扫码/2:成功) |
+| | | - 🎉 新增 `/api/auth/capture-status` | 查询签名采集进度 (是否完成、已采集数量) |
+| | | - 🐛 修复 Python 脚本 UTF-8 编码问题 | Windows 环境 Rust 读取 stdout 报错 |
+| | | - ⚡ 优化日志时区显示 | 从 UTC 改为本地时区 (默认 UTC+8) |
 | **v1.1.0** | 2026-01-15 | **新增接口与模块重构** | |
 | | | - 新增通知页采集: `/api/notification/mentions` 和 `/connections` | 评论/@、新增关注 |
 | | | - 新增图文详情: `/api/note/page` | 笔记评论分页 |
@@ -85,6 +92,8 @@ python client_demo.py
 | :--- | :--- | :--- | :--- |
 | **Auth** | `/api/auth/login-session` | ✅ | 初始化登录会话 (流式响应) |
 | **Auth** | `/api/auth/session` | ✅ | 检查 Session 有效性 |
+| **Auth** | `/api/auth/qrcode-status` | ✅ | 实时查询扫码状态 (0:未扫码/1:已扫码/2:成功) |
+| **Auth** | `/api/auth/capture-status` | ✅ | 查询签名采集进度 |
 | **User** | `/api/user/me` | ✅ | 获取当前用户信息 |
 | **Search** | `/api/search/trending` | ✅ | 获取实时热搜关键词 |
 | **Feed** | `/api/feed/homefeed/{category}` | ✅ | 11 个垂直频道 (recommend/fashion/food/cosmetics/movie_and_tv/career/love/household_product/gaming/travel/fitness) |
