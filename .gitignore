@@ -1,4 +1,5 @@
 /target
+/doc
 __pycache__/
 *.pyc
 *.pyo
@@ -16,5 +17,3 @@ qr_login.png
 latest_qr.png
 debug_qr.png
 *.log
-
-/doc/

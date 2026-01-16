@@ -1,319 +1,326 @@
-use crate::auth::AuthService;
-use crate::client::XhsClient;
-use crate::models::login::{QrCodeCreateResponse, QrCodeStatusResponse};
-use anyhow::Result;
-use serde_json::json;
-use std::sync::Arc;
+//! Login API - QR Code Login Flow
+//!
+//! This module handles the XHS QR code login process:
+//! 1. Fetch guest cookies from Python Agent (Playwright)
+//! 2. Create QR code using official API
+//! 3. Poll QR code status until login success
+//! 4. Store user credentials in MongoDB
+//!
+//! Design Principles:
+//! - Single Responsibility: Each function does one thing
+//! - KISS: Simple, straightforward implementation
 
-const ORIGIN: &str = "https://www.xiaohongshu.com";
-const REFERER: &str = "https://www.xiaohongshu.com/";
+use anyhow::{anyhow, Result};
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, ORIGIN, REFERER, USER_AGENT};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-pub async fn create_qrcode(client: &XhsClient, auth: &Arc<AuthService>) -> Result<QrCodeCreateResponse> {
-    let url = "https://edith.xiaohongshu.com/api/sns/web/v1/login/qrcode/create";
-    let body_json = json!({"qr_type": 1});
-    let body_str = body_json.to_string();
+// ============================================================================
+// Constants
+// ============================================================================
 
-    // Get credentials and signature from auth service
-    let credentials = auth.get_credentials().await?;
-    let (xs, xt, xs_common) = auth.sign_request(url, "POST", Some(&body_str)).await?;
-    
-    tracing::info!("Using Credentials - xs_common: {:.50}...", xs_common);
+const XHS_ORIGIN: &str = "https://www.xiaohongshu.com";
+const XHS_REFERER: &str = "https://www.xiaohongshu.com/";
+const XHS_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
 
-    let response = client.get_client()
-        .post(url)
-        .header("content-type", "application/json;charset=UTF-8")
-        .header("origin", ORIGIN)
-        .header("referer", REFERER)
-        .header("accept", "application/json, text/plain, */*")
-        .header("accept-language", "zh-CN,zh;q=0.9")
-        .header("priority", "u=1, i")
-        .header("sec-ch-ua", r#""Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24""#)
-        .header("sec-ch-ua-mobile", "?0")
-        .header("sec-ch-ua-platform", "\"Windows\"")
-        .header("sec-fetch-dest", "empty")
-        .header("sec-fetch-mode", "cors")
-        .header("sec-fetch-site", "same-site")
-        .header("x-t", xt.to_string())
-        .header("x-b3-traceid", "523a6c2267e872aa")
-        .header("x-s", xs)
-        .header("x-s-common", xs_common)
-        .header("cookie", credentials.cookie_string())
-        .json(&body_json)
-        .send()
-        .await?;
-        
-    let status = response.status();
-    let text = response.text().await?;
-    tracing::info!("Create QR Code Response [{}]: {}", status, text);
+const AGENT_URL: &str = "http://127.0.0.1:8765";
+const QRCODE_CREATE_URL: &str = "https://edith.xiaohongshu.com/api/sns/web/v1/login/qrcode/create";
+const QRCODE_STATUS_URL: &str = "https://edith.xiaohongshu.com/api/sns/web/v1/login/qrcode/status";
 
-    // Check for 406 error and invalidate credentials if needed
-    if status.as_u16() == 406 {
-        tracing::warn!("Received 406 error, invalidating credentials");
-        auth.invalidate_credentials().await?;
-    }
+// ============================================================================
+// Agent Request/Response Models
+// ============================================================================
 
-    let result = serde_json::from_str::<QrCodeCreateResponse>(&text)?;
-    Ok(result)
+/// Request to Python Agent for signature generation
+#[derive(Debug, Serialize)]
+struct AgentSignRequest {
+    method: String,
+    uri: String,
+    cookies: HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload: Option<serde_json::Value>,
 }
 
-pub async fn check_qrcode_status(client: &XhsClient, auth: &Arc<AuthService>, qr_id: &str, code: &str) -> Result<QrCodeStatusResponse> {
-    let base_url = "https://edith.xiaohongshu.com/api/sns/web/v1/login/qrcode/status";
-    let url = format!("{}?qr_id={}&code={}", base_url, qr_id, code);
-    
-    // Get credentials and signature from auth service
-    let credentials = auth.get_credentials().await?;
-    let (xs, xt, xs_common) = auth.sign_request(&url, "GET", None).await?;
+/// Response from Python Agent signature endpoint
+#[derive(Debug, Deserialize)]
+struct AgentSignResponse {
+    success: bool,
+    x_s: Option<String>,
+    x_t: Option<String>,
+    x_s_common: Option<String>,
+    x_b3_traceid: Option<String>,
+    x_xray_traceid: Option<String>,
+    error: Option<String>,
+}
 
-    let response = client.get_client()
+/// Response from Python Agent guest-cookies endpoint
+#[derive(Debug, Deserialize)]
+struct AgentGuestCookiesResponse {
+    success: bool,
+    cookies: Option<HashMap<String, String>>,
+    error: Option<String>,
+}
+
+// ============================================================================
+// XHS API Response Models
+// ============================================================================
+
+/// XHS QR Code Create Response
+#[derive(Debug, Deserialize, Serialize)]
+pub struct QrCodeCreateResponse {
+    pub success: bool,
+    pub code: i32,
+    pub msg: Option<String>,
+    pub data: Option<QrCodeCreateData>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct QrCodeCreateData {
+    pub url: String,
+    pub qr_id: String,
+    pub code: String,
+}
+
+/// XHS QR Code Status Response
+#[derive(Debug, Deserialize, Serialize)]
+pub struct QrCodeStatusResponse {
+    pub success: bool,
+    pub code: i32,
+    pub msg: Option<String>,
+    pub data: Option<QrCodeStatusData>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, utoipa::ToSchema)]
+pub struct QrCodeStatusData {
+    pub code_status: Option<i32>,
+    pub login_info: Option<LoginInfo>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, utoipa::ToSchema)]
+pub struct LoginInfo {
+    pub user_id: Option<String>,
+    pub session: Option<String>,
+}
+
+// ============================================================================
+// Public API Response Models (for Rust Server endpoints)
+// ============================================================================
+
+/// Response for guest-init endpoint
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct GuestInitResponse {
+    pub success: bool,
+    pub cookies: Option<HashMap<String, String>>,
+    pub error: Option<String>,
+}
+
+/// Response for qrcode/create endpoint
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CreateQrCodeResponse {
+    pub success: bool,
+    pub qr_url: Option<String>,
+    pub qr_id: Option<String>,
+    pub code: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Response for qrcode/status endpoint
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct PollStatusResponse {
+    pub success: bool,
+    pub code_status: i32,  // 0=waiting, 1=scanned, 2=confirmed
+    pub login_info: Option<LoginInfo>,
+    pub new_cookies: Option<HashMap<String, String>>,
+    pub error: Option<String>,
+}
+
+// ============================================================================
+// Core Functions
+// ============================================================================
+
+/// Fetch guest cookies from Python Agent (uses Playwright internally)
+///
+/// Returns a HashMap of cookies needed for QR code login
+pub async fn fetch_guest_cookies() -> Result<HashMap<String, String>> {
+    let client = reqwest::Client::new();
+    let url = format!("{}/guest-cookies", AGENT_URL);
+    
+    tracing::info!("Fetching guest cookies from Agent...");
+    
+    let response = client
         .get(&url)
-        .header("x-login-mode;", "")
-        .header("origin", ORIGIN)
-        .header("referer", REFERER)
-        .header("accept", "application/json, text/plain, */*")
-        .header("accept-language", "zh-CN,zh;q=0.9")
-        .header("sec-ch-ua", r#""Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24""#)
-        .header("sec-ch-ua-mobile", "?0")
-        .header("sec-ch-ua-platform", "\"Windows\"")
-        .header("sec-fetch-dest", "empty")
-        .header("sec-fetch-mode", "cors")
-        .header("sec-fetch-site", "same-site")
-        .header("x-t", xt.to_string())
-        .header("x-s", xs)
-        .header("x-s-common", xs_common)
-        .header("cookie", credentials.cookie_string())
+        .timeout(std::time::Duration::from_secs(30))  // Playwright needs time
         .send()
-        .await?;
-
-    let status = response.status();
+        .await
+        .map_err(|e| anyhow!("Failed to connect to Agent: {}", e))?;
     
-    // Check for 406 error
-    if status.as_u16() == 406 {
-        tracing::warn!("Received 406 error, invalidating credentials");
-        auth.invalidate_credentials().await?;
+    let result: AgentGuestCookiesResponse = response
+        .json()
+        .await
+        .map_err(|e| anyhow!("Failed to parse Agent response: {}", e))?;
+    
+    if !result.success {
+        return Err(anyhow!("Agent error: {}", result.error.unwrap_or_default()));
     }
-
-    let result = response.json::<QrCodeStatusResponse>().await?;
-    Ok(result)
+    
+    result.cookies.ok_or_else(|| anyhow!("No cookies returned"))
 }
 
-pub async fn start_login_session(
-    qrcode_status: std::sync::Arc<tokio::sync::RwLock<Option<crate::models::login::QrCodeStatusData>>>,
-    capture_status: std::sync::Arc<tokio::sync::RwLock<Option<crate::models::login::CaptureStatusData>>>
-) -> Result<crate::models::login::QrCodeSessionResponse> {
-    use tokio::process::Command;
-    use std::process::Stdio;
-    use tokio::io::{BufReader, AsyncBufReadExt};
-    use crate::models::login::{QrCodeSessionResponse, QrCodeStatusData, LoginInfo, CaptureStatusData};
-
-    tracing::info!("Starting Python login session...");
-
-    let mut command = Command::new("python");
-    // Ensure we flush output (Python by default buffers stdout if not TTY)
-    // -u force stdout to be unbuffered (or line buffered)
-    command.arg("-u") 
-        .arg("scripts/login.py")
-        .arg("--headless")
-        .arg("--json");
-        
-    command.stdout(Stdio::piped());
-    // Also capture stderr to log errors
-    command.stderr(Stdio::piped());
+/// Get signature from Python Agent
+async fn sign_request(
+    cookies: &HashMap<String, String>,
+    method: &str,
+    uri: &str,
+    payload: Option<serde_json::Value>,
+) -> Result<(String, String, String, String)> {
+    let client = reqwest::Client::new();
+    let url = format!("{}/sign", AGENT_URL);
     
-    let mut child = command.spawn().map_err(|e| anyhow::anyhow!("Failed to spawn python script: {}", e))?;
-    
-    let stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("Failed to capture stdout"))?;
-    let mut reader = BufReader::new(stdout);
-    
-    let mut line = String::new();
-    let response = loop {
-        line.clear();
-        let bytes_read = reader.read_line(&mut line).await?;
-        if bytes_read == 0 {
-             // Check stderr if stdout is empty
-             return Err(anyhow::anyhow!("Python script exited without output"));
-        }
-        
-        let trimmed = line.trim();
-        if trimmed.is_empty() { continue; }
-        
-        // Try to parse JSON
-        if let Ok(resp) = serde_json::from_str::<QrCodeSessionResponse>(trimmed) {
-             break resp;
-        } else {
-             tracing::debug!("Python Output (Ignored): {}", trimmed);
-        }
+    let request = AgentSignRequest {
+        method: method.to_string(),
+        uri: uri.to_string(),
+        cookies: cookies.clone(),
+        payload,
     };
     
-    // Spawn background task to monitor the rest of the session
-    tokio::spawn(async move {
-        use tokio::io::AsyncReadExt;
-        
-        tracing::info!("Login session background task started (PID: {:?})", child.id());
-        
-        // Use byte buffer for robust reading (handles non-UTF8 gracefully)
-        let mut buffer = vec![0u8; 4096];
-        let mut accumulated = Vec::new();
-        
-        loop {
-            match reader.read(&mut buffer).await {
-                Ok(0) => break, // EOF
-                Ok(n) => {
-                    accumulated.extend_from_slice(&buffer[..n]);
-                    
-                    // Process complete lines
-                    while let Some(pos) = accumulated.iter().position(|&b| b == b'\n') {
-                        let line_bytes: Vec<u8> = accumulated.drain(..=pos).collect();
-                        // Convert to string with lossy UTF-8 handling
-                        let line = String::from_utf8_lossy(&line_bytes);
-                        let trimmed = line.trim();
-                        if !trimmed.is_empty() {
-                            tracing::info!("Session Update: {}", trimmed);
-                            
-                            // 尝试解析 qrcode_status JSON 并更新共享状态
-                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                                if json.get("step").and_then(|s| s.as_str()) == Some("qrcode_status") {
-                                    if let Some(data) = json.get("data") {
-                                        let code_status = data.get("code_status")
-                                            .and_then(|c| c.as_i64())
-                                            .unwrap_or(-1) as i32;
-                                        
-                                        let login_info = data.get("login_info").and_then(|info| {
-                                            Some(LoginInfo {
-                                                session: info.get("session")?.as_str()?.to_string(),
-                                                secure_session: info.get("secure_session")?.as_str()?.to_string(),
-                                                user_id: info.get("user_id")?.as_str()?.to_string(),
-                                            })
-                                        });
-                                        
-                                        // 更新共享状态
-                                        let mut status = qrcode_status.write().await;
-                                        *status = Some(QrCodeStatusData {
-                                            code_status,
-                                            login_info,
-                                        });
-                                        tracing::info!("QR Status updated: code_status={}", code_status);
-                                    }
-                                }
-                            
-                                // 解析 signatures_captured (采集完成信息)
-                                if let Some(signatures) = json.get("signatures_captured") {
-                                    if let Some(arr) = signatures.as_array() {
-                                        let captured: Vec<String> = arr
-                                            .iter()
-                                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                            .collect();
-                                        let count = captured.len();
-                                        
-                                        // 更新采集状态
-                                        let mut status = capture_status.write().await;
-                                        *status = Some(CaptureStatusData {
-                                            is_complete: true,
-                                            signatures_captured: captured.clone(),
-                                            total_count: count,
-                                            message: format!("采集完成，共 {} 个签名", count),
-                                        });
-                                        tracing::info!("Capture Status updated: {} signatures captured", count);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Error reading script output: {}", e);
-                    break;
-                }
-            }
-        }
-        
-        // Process any remaining data
-        if !accumulated.is_empty() {
-            let line = String::from_utf8_lossy(&accumulated);
-            let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                tracing::info!("Session Update: {}", trimmed);
-            }
-        }
-        
-        // 无论成功还是失败，进程退出后标记采集完成
-        {
-            let mut status = capture_status.write().await;
-            if let Some(ref mut data) = *status {
-                if !data.is_complete {
-                    data.is_complete = true;
-                    data.message = "采集流程已结束".to_string();
-                    tracing::info!("Capture marked as complete (process exited)");
-                }
-            } else {
-                *status = Some(CaptureStatusData {
-                    is_complete: true,
-                    signatures_captured: vec![],
-                    total_count: 0,
-                    message: "采集流程异常结束".to_string(),
-                });
-            }
-        }
-        
-        match child.wait().await {
-            Ok(status) => tracing::info!("Login session process exited with: {}", status),
-            Err(e) => tracing::error!("Login session process error: {}", e),
-        }
-    });
+    let response = client
+        .post(&url)
+        .json(&request)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| anyhow!("Failed to connect to Agent: {}", e))?;
     
-    Ok(response)
+    let result: AgentSignResponse = response
+        .json()
+        .await
+        .map_err(|e| anyhow!("Failed to parse signature response: {}", e))?;
+    
+    if !result.success {
+        return Err(anyhow!("Sign error: {}", result.error.unwrap_or_default()));
+    }
+    
+    Ok((
+        result.x_s.unwrap_or_default(),
+        result.x_t.unwrap_or_default(),
+        result.x_s_common.unwrap_or_default(),
+        result.x_b3_traceid.unwrap_or_default(),
+    ))
 }
 
-/// Get current session/credential information
-pub async fn get_session_info(auth: &Arc<AuthService>) -> Result<crate::models::login::SessionInfoResponse> {
-    use crate::models::login::{SessionInfoResponse, SessionInfoData, CookieInfo};
+/// Build common headers for XHS API requests
+fn build_common_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(ACCEPT, HeaderValue::from_static("application/json, text/plain, */*"));
+    headers.insert(ORIGIN, HeaderValue::from_static(XHS_ORIGIN));
+    headers.insert(REFERER, HeaderValue::from_static(XHS_REFERER));
+    headers.insert(USER_AGENT, HeaderValue::from_static(XHS_USER_AGENT));
+    headers
+}
+
+/// Convert cookies HashMap to cookie string
+fn cookies_to_string(cookies: &HashMap<String, String>) -> String {
+    cookies
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Create QR code using official API
+pub async fn create_qrcode(cookies: &HashMap<String, String>) -> Result<QrCodeCreateResponse> {
+    let uri = "/api/sns/web/v1/login/qrcode/create";
+    let payload = serde_json::json!({"qr_type": 1});
     
-    match auth.try_get_credentials().await? {
-        Some(creds) => {
-            let cookies: Vec<CookieInfo> = creds.cookies.iter().map(|(name, value)| {
-                // Mask cookie values for security (show first 3 and last 3 chars)
-                let masked_value = if value.len() > 10 {
-                    format!("{}...{}", &value[..3], &value[value.len()-3..])
-                } else {
-                    value.clone()
-                };
-                
-                CookieInfo {
-                    name: name.clone(),
-                    value: masked_value,
-                    domain: ".xiaohongshu.com".to_string(),
+    // Get signature
+    let (x_s, x_t, x_s_common, x_b3_traceid) = 
+        sign_request(cookies, "POST", uri, Some(payload.clone())).await?;
+    
+    // Build request
+    let mut headers = build_common_headers();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json;charset=UTF-8"));
+    headers.insert("x-s", HeaderValue::from_str(&x_s)?);
+    headers.insert("x-t", HeaderValue::from_str(&x_t)?);
+    headers.insert("x-s-common", HeaderValue::from_str(&x_s_common)?);
+    headers.insert("x-b3-traceid", HeaderValue::from_str(&x_b3_traceid)?);
+    headers.insert("cookie", HeaderValue::from_str(&cookies_to_string(cookies))?);
+    
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()?;
+    
+    tracing::info!("Creating QR code...");
+    
+    let response = client
+        .post(QRCODE_CREATE_URL)
+        .json(&payload)
+        .send()
+        .await?;
+    
+    let status = response.status();
+    let text = response.text().await?;
+    
+    tracing::debug!("QR Create Response [{}]: {}", status, text);
+    
+    if status.as_u16() == 406 {
+        return Err(anyhow!("Signature rejected (406): cookies may be invalid"));
+    }
+    
+    serde_json::from_str(&text).map_err(|e| anyhow!("Parse error: {} - Body: {}", e, text))
+}
+
+/// Check QR code status using official API
+///
+/// Returns the status and any new cookies from Set-Cookie headers
+pub async fn check_qrcode_status(
+    cookies: &HashMap<String, String>,
+    qr_id: &str,
+    code: &str,
+) -> Result<(QrCodeStatusResponse, Option<HashMap<String, String>>)> {
+    let uri = format!("/api/sns/web/v1/login/qrcode/status?qr_id={}&code={}", qr_id, code);
+    let url = format!("{}?qr_id={}&code={}", QRCODE_STATUS_URL, qr_id, code);
+    
+    // Get signature
+    let (x_s, x_t, x_s_common, x_b3_traceid) = 
+        sign_request(cookies, "GET", &uri, None).await?;
+    
+    // Build request
+    let mut headers = build_common_headers();
+    headers.insert("x-s", HeaderValue::from_str(&x_s)?);
+    headers.insert("x-t", HeaderValue::from_str(&x_t)?);
+    headers.insert("x-s-common", HeaderValue::from_str(&x_s_common)?);
+    headers.insert("x-b3-traceid", HeaderValue::from_str(&x_b3_traceid)?);
+    headers.insert("cookie", HeaderValue::from_str(&cookies_to_string(cookies))?);
+    
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()?;
+    
+    let response = client.get(&url).send().await?;
+    
+    // Extract new cookies from Set-Cookie headers
+    let mut new_cookies: HashMap<String, String> = HashMap::new();
+    for (name, value) in response.headers().iter() {
+        if name.as_str() == "set-cookie" {
+            if let Ok(v) = value.to_str() {
+                // Parse "name=value; ..." format
+                if let Some(main) = v.split(';').next() {
+                    let mut parts = main.splitn(2, '=');
+                    if let (Some(k), Some(val)) = (parts.next(), parts.next()) {
+                        new_cookies.insert(k.trim().to_string(), val.trim().to_string());
+                    }
                 }
-            }).collect();
-            
-            // Mask x_s_common (show first 30 chars, if present)
-            let masked_xs_common = creds.x_s_common.as_ref().map(|s| {
-                if s.len() > 30 {
-                    format!("{}...", &s[..30])
-                } else {
-                    s.clone()
-                }
-            });
-            
-            Ok(SessionInfoResponse {
-                code: 0,
-                success: true,
-                msg: "Session found".to_string(),
-                data: Some(SessionInfoData {
-                    user_id: creds.user_id,
-                    cookie_count: creds.cookies.len(),
-                    cookies,
-                    x_s_common: masked_xs_common,
-                    created_at: creds.created_at.to_string(),
-                    is_valid: creds.is_valid,
-                }),
-            })
-        },
-        None => {
-            Ok(SessionInfoResponse {
-                code: -1,
-                success: false,
-                msg: "No active session found. Please login first.".to_string(),
-                data: None,
-            })
+            }
         }
     }
+    
+    let status_response: QrCodeStatusResponse = response.json().await?;
+    
+    let cookies_to_return = if new_cookies.is_empty() {
+        None
+    } else {
+        Some(new_cookies)
+    };
+    
+    Ok((status_response, cookies_to_return))
 }

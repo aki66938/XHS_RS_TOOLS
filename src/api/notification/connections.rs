@@ -3,14 +3,14 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// Connections response (新增关注 通知)
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ConnectionsResponse {
     pub success: bool,
     pub msg: String,
     pub data: Option<ConnectionsData>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ConnectionsData {
     pub message_list: Vec<serde_json::Value>,
 }

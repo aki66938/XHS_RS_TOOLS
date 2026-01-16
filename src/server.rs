@@ -15,10 +15,15 @@ use crate::{
     client::XhsClient,
     models::{
         feed::{HomefeedRequest, HomefeedResponse, HomefeedData, HomefeedItem, NoteCard, NoteUser, NoteCover, CoverImageInfo, InteractInfo, NoteVideo, VideoCapa},
-        login::{QrCodeSessionResponse, SessionInfoResponse, SessionInfoData, CookieInfo, QrCodeStatusResponse, QrCodeStatusData, LoginInfo, CaptureStatusData, CaptureStatusResponse},
         search::{QueryTrendingResponse, QueryTrendingData, TrendingQuery, TrendingHintWord},
         user::{UserMeResponse, UserInfo},
     },
+    api::notification::{
+        mentions::{MentionsResponse, MentionsData},
+        connections::{ConnectionsResponse, ConnectionsData},
+        likes::{LikesResponse, LikesData},
+    },
+    api::login::{GuestInitResponse, CreateQrCodeResponse, PollStatusResponse, QrCodeStatusData, LoginInfo},
 };
 
 #[derive(OpenApi)]
@@ -26,22 +31,23 @@ use crate::{
     paths(
         query_trending_handler,
         user_me_handler,
-        start_login_session_handler,
-        get_session_handler,
-        get_qrcode_status_handler,
-        get_capture_status_handler,
+        guest_init_handler,
+        create_qrcode_handler,
+        poll_qrcode_status_handler,
         api::feed::category::get_category_feed,
         api::note::page::get_note_page,
         mentions_handler,
         connections_handler,
+        likes_handler,
     ),
     components(
         schemas(
-            QrCodeSessionResponse, SessionInfoResponse, SessionInfoData, CookieInfo,
-            QrCodeStatusResponse, QrCodeStatusData, LoginInfo,
-            CaptureStatusData, CaptureStatusResponse,
+            GuestInitResponse, CreateQrCodeResponse, PollStatusResponse, QrCodeStatusData, LoginInfo,
             QueryTrendingResponse, QueryTrendingData, TrendingQuery, TrendingHintWord,
             UserMeResponse, UserInfo,
+            MentionsResponse, MentionsData,
+            ConnectionsResponse, ConnectionsData,
+            LikesResponse, LikesData,
             HomefeedRequest, HomefeedResponse, HomefeedData, HomefeedItem, NoteCard, NoteUser, NoteCover, CoverImageInfo, InteractInfo, NoteVideo, VideoCapa
         )
     ),
@@ -57,10 +63,10 @@ struct ApiDoc;
 pub struct AppState {
     pub api: XhsApiClient,
     pub auth: Arc<AuthService>,
-    /// 共享的二维码登录状态（由 Python 脚本更新）
-    pub qrcode_status: Arc<RwLock<Option<QrCodeStatusData>>>,
-    /// 共享的采集状态（由 Python 脚本更新）
-    pub capture_status: Arc<RwLock<Option<CaptureStatusData>>>,
+    /// Guest cookies for QR login (populated by guest-init)
+    pub guest_cookies: Arc<RwLock<Option<std::collections::HashMap<String, String>>>>,
+    /// Current QR code info (qr_id, code)
+    pub qrcode_info: Arc<RwLock<Option<(String, String)>>>,
 }
 
 
@@ -145,152 +151,254 @@ async fn homefeed_recommend_handler(
 }
 
 
-/// Start Login Session (Streamed Response)
+
+
+// ============================================================================
+// Login Handlers (Pure Rust + Python Agent)
+// ============================================================================
+
+/// 初始化访客登录会话
 ///
-/// Returns a JSON stream. First message contains QR code. Subsequent messages stream login status updates.
+/// 通过 Playwright 获取访客 Cookie，存储到内存中供后续 QR 登录使用
 #[utoipa::path(
     post,
-    path = "/api/auth/login-session",
+    path = "/api/auth/guest-init",
     tag = "auth",
+    summary = "初始化访客会话",
+    description = "获取访客 Cookie，这是 QR 登录的第一步",
     responses(
-        (status = 200, description = "Login Session Stream (JSON Lines)", body = QrCodeSessionResponse)
+        (status = 200, description = "访客 Cookie", body = GuestInitResponse)
     )
 )]
-async fn start_login_session_handler(
+async fn guest_init_handler(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    // 重置 qrcode_status 状态
-    {
-        let mut status = state.qrcode_status.write().await;
-        *status = Some(QrCodeStatusData {
-            code_status: 0,  // 初始状态：未扫码
-            login_info: None,
-        });
-    }
+    tracing::info!("Guest init requested");
     
-    // 重置 capture_status 状态
-    {
-        let mut status = state.capture_status.write().await;
-        *status = Some(CaptureStatusData {
-            is_complete: false,
-            signatures_captured: vec![],
-            total_count: 0,
-            message: "采集中...".to_string(),
-        });
-    }
-    
-    match api::login::start_login_session(
-        state.qrcode_status.clone(),
-        state.capture_status.clone()
-    ).await {
-        Ok(res) => Json(res).into_response(),
-        Err(e) => Json(serde_json::json!({
-            "success": false,
-            "error": e.to_string(),
-        })).into_response(),
+    match api::login::fetch_guest_cookies().await {
+        Ok(cookies) => {
+            // Store cookies in state
+            {
+                let mut guest = state.guest_cookies.write().await;
+                *guest = Some(cookies.clone());
+            }
+            
+            tracing::info!("Guest cookies obtained successfully");
+            Json(GuestInitResponse {
+                success: true,
+                cookies: Some(cookies),
+                error: None,
+            }).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to get guest cookies: {}", e);
+            Json(GuestInitResponse {
+                success: false,
+                cookies: None,
+                error: Some(e.to_string()),
+            }).into_response()
+        }
     }
 }
 
-/// Get Current Session Info
+/// 创建登录二维码
 ///
-/// View stored cookies and session details. Cookie values are masked for security.
+/// 使用访客 Cookie 调用官方 API 创建二维码
 #[utoipa::path(
-    get,
-    path = "/api/auth/session",
+    post,
+    path = "/api/auth/qrcode/create",
     tag = "auth",
+    summary = "创建登录二维码",
+    description = "需要先调用 guest-init 获取访客 Cookie",
     responses(
-        (status = 200, description = "Current Session Information", body = SessionInfoResponse)
+        (status = 200, description = "二维码信息", body = CreateQrCodeResponse)
     )
 )]
-async fn get_session_handler(
+async fn create_qrcode_handler(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    match api::login::get_session_info(&state.auth).await {
-        Ok(res) => Json(res).into_response(),
-        Err(e) => Json(serde_json::json!({
-            "code": -1,
-            "success": false,
-            "msg": e.to_string(),
-            "data": null
-        })).into_response(),
+    // Get guest cookies
+    let cookies = {
+        let guard = state.guest_cookies.read().await;
+        guard.clone()
+    };
+    
+    let cookies = match cookies {
+        Some(c) => c,
+        None => {
+            return Json(CreateQrCodeResponse {
+                success: false,
+                qr_url: None,
+                qr_id: None,
+                code: None,
+                error: Some("请先调用 /api/auth/guest-init 获取访客 Cookie".to_string()),
+            }).into_response();
+        }
+    };
+    
+    match api::login::create_qrcode(&cookies).await {
+        Ok(resp) => {
+            if resp.success {
+                if let Some(data) = resp.data {
+                    // Store qr_id and code for polling
+                    {
+                        let mut info = state.qrcode_info.write().await;
+                        *info = Some((data.qr_id.clone(), data.code.clone()));
+                    }
+                    
+                    Json(CreateQrCodeResponse {
+                        success: true,
+                        qr_url: Some(data.url),
+                        qr_id: Some(data.qr_id),
+                        code: Some(data.code),
+                        error: None,
+                    }).into_response()
+                } else {
+                    Json(CreateQrCodeResponse {
+                        success: false,
+                        qr_url: None,
+                        qr_id: None,
+                        code: None,
+                        error: Some("QR code data missing".to_string()),
+                    }).into_response()
+                }
+            } else {
+                Json(CreateQrCodeResponse {
+                    success: false,
+                    qr_url: None,
+                    qr_id: None,
+                    code: None,
+                    error: resp.msg,
+                }).into_response()
+            }
+        }
+        Err(e) => {
+            Json(CreateQrCodeResponse {
+                success: false,
+                qr_url: None,
+                qr_id: None,
+                code: None,
+                error: Some(e.to_string()),
+            }).into_response()
+        }
     }
 }
 
-/// 获取二维码登录状态
+/// 轮询二维码登录状态
 ///
-/// 轮询此接口获取扫码状态:
-/// - code_status=0: 未扫码
+/// - code_status=0: 等待扫码
 /// - code_status=1: 已扫码，等待确认
-/// - code_status=2: 登录成功 (包含 login_info)
+/// - code_status=2: 登录成功
 #[utoipa::path(
     get,
-    path = "/api/auth/qrcode-status",
+    path = "/api/auth/qrcode/status",
     tag = "auth",
-    summary = "获取二维码登录状态",
+    summary = "轮询二维码状态",
+    description = "轮询直到 code_status=2 表示登录成功",
     responses(
-        (status = 200, description = "二维码登录状态", body = QrCodeStatusResponse)
+        (status = 200, description = "二维码状态", body = PollStatusResponse)
     )
 )]
-async fn get_qrcode_status_handler(
+async fn poll_qrcode_status_handler(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let status = state.qrcode_status.read().await;
-    match status.as_ref() {
-        Some(data) => Json(QrCodeStatusResponse {
-            code: 0,
-            success: true,
-            msg: "成功".to_string(),
-            data: Some(data.clone()),
-        }).into_response(),
-        None => Json(QrCodeStatusResponse {
-            code: 0,
-            success: true,
-            msg: "等待扫码".to_string(),
-            data: Some(QrCodeStatusData {
-                code_status: -1,  // -1 表示登录流程未开始
+    // Get guest cookies
+    let cookies = {
+        let guard = state.guest_cookies.read().await;
+        guard.clone()
+    };
+    
+    let cookies = match cookies {
+        Some(c) => c,
+        None => {
+            return Json(PollStatusResponse {
+                success: false,
+                code_status: -1,
                 login_info: None,
-            }),
-        }).into_response(),
+                new_cookies: None,
+                error: Some("请先调用 /api/auth/guest-init".to_string()),
+            }).into_response();
+        }
+    };
+    
+    // Get qr_id and code
+    let qrcode_info = {
+        let guard = state.qrcode_info.read().await;
+        guard.clone()
+    };
+    
+    let (qr_id, code) = match qrcode_info {
+        Some(info) => info,
+        None => {
+            return Json(PollStatusResponse {
+                success: false,
+                code_status: -1,
+                login_info: None,
+                new_cookies: None,
+                error: Some("请先调用 /api/auth/qrcode/create".to_string()),
+            }).into_response();
+        }
+    };
+    
+    match api::login::check_qrcode_status(&cookies, &qr_id, &code).await {
+        Ok((resp, new_cookies)) => {
+            let code_status = resp.data
+                .as_ref()
+                .and_then(|d| d.code_status)
+                .unwrap_or(-1);
+            
+            let login_info = resp.data.as_ref().and_then(|d| d.login_info.clone());
+            
+            // If login success, merge new cookies with guest cookies and save
+            if code_status == 2 {
+                if let Some(ref new_c) = new_cookies {
+                    let mut merged = cookies.clone();
+                    merged.extend(new_c.clone());
+                    
+                    // Extract user_id from login_info or use a default
+                    let user_id = login_info
+                        .as_ref()
+                        .and_then(|info| info.user_id.clone())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    
+                    // Create and save credentials
+                    let creds = crate::auth::credentials::UserCredentials::new(
+                        user_id.clone(),
+                        merged,
+                        None, // No x_s_common in pure algo mode
+                    );
+                    
+                    match state.auth.save_credentials(&creds).await {
+                        Ok(_) => {
+                            tracing::info!("Login successful! Credentials saved for user: {}", user_id);
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to save credentials: {}", e);
+                        }
+                    }
+                }
+            }
+            
+            Json(PollStatusResponse {
+                success: resp.success,
+                code_status,
+                login_info,
+                new_cookies,
+                error: None,
+            }).into_response()
+        }
+        Err(e) => {
+            Json(PollStatusResponse {
+                success: false,
+                code_status: -1,
+                login_info: None,
+                new_cookies: None,
+                error: Some(e.to_string()),
+            }).into_response()
+        }
     }
 }
 
-/// 获取采集任务状态
-///
-/// 轮询此接口检查 Playwright 签名采集是否完成。
-/// 只有 is_complete=true 时，才能安全调用其他需要签名的 API。
-#[utoipa::path(
-    get,
-    path = "/api/auth/capture-status",
-    tag = "auth",
-    summary = "获取采集任务状态",
-    responses(
-        (status = 200, description = "采集任务状态", body = CaptureStatusResponse)
-    )
-)]
-async fn get_capture_status_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    let status = state.capture_status.read().await;
-    match status.as_ref() {
-        Some(data) => Json(CaptureStatusResponse {
-            code: 0,
-            success: true,
-            msg: "成功".to_string(),
-            data: Some(data.clone()),
-        }).into_response(),
-        None => Json(CaptureStatusResponse {
-            code: 0,
-            success: true,
-            msg: "采集未开始".to_string(),
-            data: Some(CaptureStatusData {
-                is_complete: false,
-                signatures_captured: vec![],
-                total_count: 0,
-                message: "等待登录流程启动".to_string(),
-            }),
-        }).into_response(),
-    }
-}
 
 /// 通知页-评论和@
 /// 
@@ -381,11 +489,11 @@ pub async fn start_server() -> anyhow::Result<()> {
     let client = XhsClient::new()?;
     let api = XhsApiClient::new(client, auth.clone());
     
-    // 初始化共享状态
-    let qrcode_status = Arc::new(RwLock::new(None));
-    let capture_status = Arc::new(RwLock::new(None));
+    // Initialize shared state for login flow
+    let guest_cookies = Arc::new(RwLock::new(None));
+    let qrcode_info = Arc::new(RwLock::new(None));
     
-    let state = Arc::new(AppState { api, auth, qrcode_status, capture_status });
+    let state = Arc::new(AppState { api, auth, guest_cookies, qrcode_info });
 
     let app = Router::new()
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
@@ -397,10 +505,10 @@ pub async fn start_server() -> anyhow::Result<()> {
         .route("/api/notification/mentions", get(mentions_handler))
         .route("/api/notification/connections", get(connections_handler))
         .route("/api/notification/likes", get(likes_handler))
-        .route("/api/auth/login-session", post(start_login_session_handler))
-        .route("/api/auth/session", get(get_session_handler))
-        .route("/api/auth/qrcode-status", get(get_qrcode_status_handler))
-        .route("/api/auth/capture-status", get(get_capture_status_handler))
+        // New login flow routes
+        .route("/api/auth/guest-init", post(guest_init_handler))
+        .route("/api/auth/qrcode/create", post(create_qrcode_handler))
+        .route("/api/auth/qrcode/status", get(poll_qrcode_status_handler))
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state);
 
@@ -417,3 +525,4 @@ pub async fn start_server() -> anyhow::Result<()> {
 
     Ok(())
 }
+

@@ -3,7 +3,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// Mentions response (评论和@ 通知)
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MentionsResponse {
     pub code: Option<i32>,
     pub success: bool,
@@ -11,7 +11,7 @@ pub struct MentionsResponse {
     pub data: Option<MentionsData>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MentionsData {
     pub cursor: Option<i64>,
     #[serde(rename = "strCursor")]

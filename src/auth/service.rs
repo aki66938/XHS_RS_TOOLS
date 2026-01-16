@@ -103,6 +103,19 @@ impl AuthService {
         Ok(())
     }
     
+    /// Save new credentials (used after QR code login success)
+    pub async fn save_credentials(&self, creds: &UserCredentials) -> Result<()> {
+        // Save to MongoDB
+        self.storage.save_credentials(creds).await?;
+        
+        // Update cache
+        let mut cache = self.cached_credentials.write().await;
+        *cache = Some(creds.clone());
+        
+        info!("Saved credentials for user: {}", creds.user_id);
+        Ok(())
+    }
+    
     /// Get captured signature for a specific endpoint
     pub async fn get_endpoint_signature(&self, endpoint: &str) -> Result<Option<super::credentials::ApiSignature>> {
         self.storage.get_api_signature(endpoint).await

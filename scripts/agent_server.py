@@ -10,8 +10,10 @@ Usage:
     
 Endpoints:
     POST /sign - Generate signatures for a given request
+    GET /guest-cookies - Get guest cookies via Playwright
     GET /health - Health check
 """
+import asyncio
 import json
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -22,7 +24,7 @@ from xhshow import Xhshow
 app = FastAPI(
     title="XHS Signature Agent",
     description="Pure Algorithm Signature Gateway for Xiaohongshu API",
-    version="1.0.0"
+    version="1.1.0"
 )
 
 # Initialize Xhshow client (singleton)
@@ -46,6 +48,13 @@ class SignResponse(BaseModel):
     x_s_common: Optional[str] = None
     x_b3_traceid: Optional[str] = None
     x_xray_traceid: Optional[str] = None
+    error: Optional[str] = None
+
+
+class GuestCookiesResponse(BaseModel):
+    """Response model for guest cookies"""
+    success: bool
+    cookies: Optional[Dict[str, str]] = None
     error: Optional[str] = None
 
 
@@ -103,6 +112,112 @@ async def generate_signature(request: SignRequest):
         )
 
 
+@app.get("/guest-cookies", response_model=GuestCookiesResponse)
+async def get_guest_cookies():
+    """
+    Get guest cookies from xiaohongshu.com using Playwright.
+    
+    This endpoint launches a headless browser, visits the XHS homepage,
+    waits for JavaScript to generate cookies, and returns them.
+    
+    Includes retry mechanism for improved reliability.
+    
+    Returns the essential cookies needed for QR code login:
+    - a1, webId, gid, web_session, websectiga, acw_tc, etc.
+    """
+    import logging
+    
+    max_retries = 3
+    
+    for attempt in range(max_retries):
+        try:
+            from playwright.async_api import async_playwright
+            
+            logging.info(f"[Guest Cookies] Attempt {attempt + 1}/{max_retries}")
+            
+            async with async_playwright() as p:
+                # Launch headless browser with longer timeout
+                browser = await p.chromium.launch(
+                    headless=True,
+                    timeout=60000  # 60 seconds for browser launch
+                )
+                
+                context = await browser.new_context(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+                    viewport={"width": 1920, "height": 1080}
+                )
+                
+                # Set default timeouts
+                context.set_default_timeout(30000)
+                context.set_default_navigation_timeout(60000)
+                
+                page = await context.new_page()
+                
+                try:
+                    # Visit homepage with timeout and multiple wait strategies
+                    await page.goto(
+                        "https://www.xiaohongshu.com/", 
+                        wait_until="domcontentloaded",  # Faster than networkidle
+                        timeout=45000
+                    )
+                    
+                    # Wait for cookies to be generated
+                    await asyncio.sleep(3)
+                    
+                    # Try to wait for network idle if possible
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=10000)
+                    except:
+                        pass  # Ignore if networkidle times out
+                    
+                    # Additional wait for JS execution
+                    await asyncio.sleep(2)
+                    
+                finally:
+                    # Always extract cookies and close browser
+                    cookies_list = await context.cookies()
+                    await browser.close()
+                
+                # Convert to dictionary
+                cookies_dict = {c['name']: c['value'] for c in cookies_list}
+                
+                logging.info(f"[Guest Cookies] Got {len(cookies_dict)} cookies")
+                
+                # Verify essential cookies exist
+                required = ['a1', 'webId', 'gid', 'web_session']
+                missing = [k for k in required if k not in cookies_dict]
+                
+                if missing:
+                    if attempt < max_retries - 1:
+                        logging.warning(f"[Guest Cookies] Missing cookies: {missing}, retrying...")
+                        await asyncio.sleep(2)
+                        continue
+                    return GuestCookiesResponse(
+                        success=False,
+                        error=f"Missing required cookies after {max_retries} attempts: {missing}"
+                    )
+                
+                return GuestCookiesResponse(
+                    success=True,
+                    cookies=cookies_dict
+                )
+                
+        except Exception as e:
+            logging.error(f"[Guest Cookies] Attempt {attempt + 1} failed: {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(3)  # Wait before retry
+                continue
+            return GuestCookiesResponse(
+                success=False,
+                error=f"Failed after {max_retries} attempts: {str(e)}"
+            )
+    
+    return GuestCookiesResponse(
+        success=False,
+        error="Unexpected error in retry loop"
+    )
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
@@ -113,6 +228,8 @@ if __name__ == "__main__":
     print("Starting XHS Signature Agent Server...")
     print("Endpoints:")
     print("  POST /sign - Generate signatures")
+    print("  GET /guest-cookies - Get guest cookies via Playwright")
     print("  GET /health - Health check")
     print("  GET /docs - OpenAPI documentation")
     uvicorn.run(app, host="127.0.0.1", port=8765)
+

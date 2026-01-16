@@ -3,14 +3,14 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// Likes response (赞和收藏 通知)
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct LikesResponse {
     pub success: bool,
     pub msg: String,
     pub data: Option<LikesData>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct LikesData {
     pub message_list: Vec<serde_json::Value>,
     #[serde(default)]

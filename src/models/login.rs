@@ -149,41 +149,4 @@ pub struct SessionInfoData {
     pub is_valid: bool,
 }
 
-/// 采集状态数据
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[schema(example = json!({
-    "is_complete": true,
-    "signatures_captured": ["user_me", "home_feed_recommend", "search_trending"],
-    "total_count": 16,
-    "message": "采集完成"
-}))]
-pub struct CaptureStatusData {
-    /// 是否采集完成
-    pub is_complete: bool,
-    /// 已采集的签名列表
-    pub signatures_captured: Vec<String>,
-    /// 已采集签名数量
-    pub total_count: usize,
-    /// 状态消息
-    pub message: String,
-}
 
-/// 采集状态响应
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[schema(example = json!({
-    "code": 0,
-    "success": true,
-    "msg": "成功",
-    "data": {
-        "is_complete": true,
-        "signatures_captured": ["user_me", "home_feed_recommend"],
-        "total_count": 16,
-        "message": "采集完成"
-    }
-}))]
-pub struct CaptureStatusResponse {
-    pub code: i32,
-    pub success: bool,
-    pub msg: String,
-    pub data: Option<CaptureStatusData>,
-}
