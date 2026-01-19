@@ -47,15 +47,14 @@ playwright install chromium
 cd ..
 ```
 
-**3. 运行服务**
-在项目根目录下运行：
+**3. 启动服务 & 测试**
 ```bash
+# 启动服务 (自动启动 Python Agent)
 cargo run
+
+# 运行测试 (新终端)
+python client_demo.py
 ```
-此命令将：
-1.  编译 Rust 后端服务。
-2.  自动启动 Python Agent (签名)。
-3.  启动 Rust Web Server。
 
 ## 🚀 当前功能 (v1.5.0)
 
@@ -103,18 +102,6 @@ cargo run
 | | | - ✨ 新增图文详情: `/api/note/page` | 
 | | | - ♻️ 重构 API 公共模块，统一请求处理逻辑 | 
 
-## 🛠️ 快速开始
-
-### 1. 启动服务
-只需运行 Rust 服务，它会自动启动 Python Agent：
-```bash
-cargo run
-```
-
-### 2. 运行测试
-```bash
-python client_demo.py
-```
 
 ## 🔌 已验证 API 列表 (Implemented APIs)
 
