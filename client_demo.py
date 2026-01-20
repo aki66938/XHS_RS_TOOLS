@@ -32,6 +32,7 @@ from scripts.test_demo.test_feed import test_homefeed, test_category_feeds
 from scripts.test_demo.test_notification import test_notifications
 from scripts.test_demo.test_note import test_note_page, test_note_detail
 from scripts.test_demo.test_pagination import test_homefeed_pagination
+from scripts.test_demo.test_media import test_media
 
 
 # ============================================================================
@@ -201,6 +202,9 @@ def test_all_apis():
     
     # Pagination Test (分页测试)
     test_homefeed_pagination()
+    
+    # Media Test (媒体采集测试)
+    test_media()
     
     print("\n" + "=" * 50)
     print("  ✅ 所有 API 测试完成")

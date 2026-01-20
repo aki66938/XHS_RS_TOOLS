@@ -22,11 +22,17 @@ use crate::{
     },
     api::login::{GuestInitResponse, CreateQrCodeResponse, PollStatusResponse, QrCodeStatusData, LoginInfo},
     api::note::detail::{NoteDetailRequest, NoteDetailResponse},
+    api::media::{
+        video::{VideoRequest, VideoResponse, VideoData, VideoItem},
+        images::{ImagesRequest, ImagesResponse, ImagesData, ImageItem},
+        download::{DownloadRequest, DownloadResponse, DownloadData},
+    },
     handlers::search as search_handlers,
     handlers::auth as auth_handlers,
     handlers::notification as notification_handlers,
     handlers::user as user_handlers,
     handlers::feed as feed_handlers,
+    handlers::media as media_handlers,
     api,
 };
 
@@ -49,6 +55,9 @@ use crate::{
         notification_handlers::mentions_handler,
         notification_handlers::connections_handler,
         notification_handlers::likes_handler,
+        media_handlers::video_handler,
+        media_handlers::images_handler,
+        media_handlers::download_handler,
     ),
     components(
         schemas(
@@ -64,15 +73,20 @@ use crate::{
             ConnectionsResponse, ConnectionsData,
             LikesResponse, LikesData,
             HomefeedRequest, HomefeedResponse, HomefeedData, HomefeedItem, NoteCard, NoteUser, NoteCover, CoverImageInfo, InteractInfo, NoteVideo, VideoCapa,
-            NoteDetailRequest, NoteDetailResponse
+            NoteDetailRequest, NoteDetailResponse,
+            VideoRequest, VideoResponse, VideoData, VideoItem,
+            ImagesRequest, ImagesResponse, ImagesData, ImageItem,
+            DownloadRequest, DownloadResponse, DownloadData
         )
     ),
     tags(
         (name = "xhs", description = "小红书 API 接口"),
         (name = "auth", description = "认证相关"),
         (name = "Feed", description = "主页发现频道：recommend(推荐)、fashion(穿搭)、food(美食)、cosmetics(彩妆)、movie_and_tv(影视)、career(职场)、love(情感)、household_product(家居)、gaming(游戏)、travel(旅行)、fitness(健身)"),
-        (name = "Note", description = "笔记相关接口：detail(详情)、page(评论)"),
+        (name = "Note", description = "笔记相关接口：detail(详情)、page(评论)、video(视频地址)"),
+        (name = "Media", description = "媒体文件操作：video(视频地址解析)、images(图片地址解析)、download(通用媒体下载)"),
         (name = "Search", description = "搜索相关接口：notes(笔记)、usersearch(用户)、onebox(聚合)、recommend(推荐)、filter(筛选)")
     )
 )]
 pub struct ApiDoc;
+

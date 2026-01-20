@@ -56,24 +56,30 @@ cargo run
 python client_demo.py
 ```
 
-## 🚀 当前功能 (v1.5.0)
+## 🚀 当前功能 (v1.7.0)
 
 以下均为目前已实现并验证的功能：
 
+*   **媒体采集**: 解析 **视频笔记** (多画质 CDN) 和 **图文笔记** (无水印/有水印)，支持服务端 **通用下载**。
 *   **纯 Rust 登录流程**: QR 码创建、状态轮询、登录确认全部 API 化，无需浏览器子进程。
 *   **全套搜索接口**: 支持搜索笔记(综合/视频/图文筛选)、搜索建议、OneBox、筛选器元数据、用户搜索。
 *   **全频道 Feed 采集**: 支持首页推荐及所有 10 个子频道（穿搭、美食、彩妆、影视、职场、情感、家居、游戏、旅行、健身）。
-*   **通知页采集**: 获取评论/@、新增关注、赞和收藏。
+*   **通知页采集**: 获取评论/@、新增关注、赞和收藏，及其分页数据。
 *   **笔记详情**: 获取指定笔记的完整内容（标题、正文、图片、标签）。
 *   **笔记评论**: 获取指定笔记的评论列表，支持分页。
 *   **实时签名**: Python Agent 提供 `xhshow` 算法实时签名。
 *   **高可靠性**: Playwright 访客 Cookie 获取支持重试机制（最多 3 次）。
-*   **模块化架构**: handlers 按领域拆分（search/auth/notification/user/feed），代码结构更清晰。
+
 
 ## 📅 开发日志 (Dev Log)
 
 | 版本 | 日期 | 更新内容 | 
 | :--- | :--- | :--- | 
+| **v1.7.0** | 2026-01-21 | **媒体采集功能 (视频+图片)** | 
+| | | - 🎬 **视频采集**: 新增 `/api/note/video` 解析视频笔记，返回多画质 CDN 直链 | 
+| | | - 🖼️ **图片采集**: 新增 `/api/note/images` 解析图文笔记，返回有水印/无水印两个版本 | 
+| | | - 📥 **通用下载**: 新增 `/api/media/download` 下载视频/图片到服务端本地 | 
+| | | - 📄 **测试更新**: `test_media.py` 新增视频和图片采集测试用例 | 
 | **v1.6.2** | 2026-01-20 | **Notification 分页支持 & Note Comment 分页文档** | 
 | | | - 🔧 **Notification 分页**: `mentions`、`connections`、`likes` 三个接口支持 `num`/`cursor` 分页参数 | 
 | | | - 📄 **分页指南**: 新增 [comment_pagination.md](doc/comment_pagination.md)、[likes_pagination.md](doc/likes_pagination.md)、[mentions_pagination.md](doc/mentions_pagination.md)、[connections_pagination.md](doc/connections_pagination.md) | 
@@ -131,6 +137,9 @@ python client_demo.py
 | **Notification** | `/api/notification/likes` | ✅ | 获取赞和收藏通知 ([📖 分页指南](doc/likes_pagination.md)) |
 | **Note** | `/api/note/page` | ✅ | 获取笔记评论列表 ([📖 分页指南](doc/comment_pagination.md)) |
 | **Note** | `/api/note/detail` | ✅ |  获取笔记完整内容 |
+| **Media** | `/api/note/video` | ✅ (v1.7) | 视频笔记地址解析（多画质 CDN 直链） |
+| **Media** | `/api/note/images` | ✅ (v1.7) | 图文笔记地址解析（有水印/无水印） |
+| **Media** | `/api/media/download` | ✅ (v1.7) | 通用媒体下载（视频/图片到本地） |
 
 ## 📚 接口文档 (API Docs)
 
@@ -152,7 +161,7 @@ python client_demo.py
 ### 法律/合规声明 (Legal Statement)
 **请务必仔细阅读：**
 
-1.  **技术研究性质**: 本项目本质上是一个 **浏览器自动化框架** 的实践案例。所有的“采集”行为均基于模拟真实用户的常规浏览操作（点击、滚动、网络请求），**不包含** 任何破解加密算法、绕过身份验证或其他攻击目标服务器安全机制的代码。
+1.  **技术研究性质**: 本项目本质上是一个 **浏览器自动化框架** 的实践案例。所有的“采集”行为均基于模拟真实用户的常规浏览操作（点击、滚动、网络请求）
 2.  **数据安全**: 本项目**不提供**任何现成的账号或 Cookie。用户必须通过官方渠道（扫码）进行合法登录。项目仅作为数据的本地处理工具，不收集、不上传任何用户敏感信息。
 3.  **合规使用**: 请使用者严格遵守《中华人民共和国网络安全法》及目标网站的《用户服务协议》。严禁将本项目用于数据爬取（Scraping）、批量账号控制（Botting）或任何侵犯他人隐私/知识产权的商业行为。
 4.  **免责条款**: 开源作者不对任何因使用本项目而导致的法律纠纷或账号损失承担责任。代码仅作为技术交流用途，下载后请于 24 小时内删除。

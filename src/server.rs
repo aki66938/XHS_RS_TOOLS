@@ -82,6 +82,11 @@ pub async fn start_server() -> anyhow::Result<()> {
         .route("/api/notification/connections", get(handlers::connections_handler))
         .route("/api/notification/likes", get(handlers::likes_handler))
         
+        // Media routes
+        .route("/api/note/video", post(handlers::video_handler))
+        .route("/api/note/images", post(handlers::images_handler))
+        .route("/api/media/download", post(handlers::download_handler))
+        
         // Auth routes
         .route("/api/auth/guest-init", post(handlers::guest_init_handler))
         .route("/api/auth/qrcode/create", post(handlers::create_qrcode_handler))
