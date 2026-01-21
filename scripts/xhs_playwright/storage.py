@@ -1,16 +1,18 @@
 """
-MongoDB storage operations for credentials and signatures
+JSON file storage operations for credentials
 """
 
-from datetime import datetime
-from pymongo import MongoClient
-from .config import MONGODB_URI, DATABASE_NAME
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+# Cookie file path (project root)
+COOKIE_FILE = Path(__file__).parent.parent.parent / "cookie.json"
 
 
 def save_credentials(cookies: dict) -> str:
     """
-    Save user credentials to MongoDB.
-    Invalidates all existing credentials before saving new ones.
+    Save user credentials to cookie.json.
     
     Args:
         cookies: Dictionary of cookies from browser
@@ -18,27 +20,23 @@ def save_credentials(cookies: dict) -> str:
     Returns:
         The user_id from cookies
     """
-    client = MongoClient(MONGODB_URI)
-    db = client[DATABASE_NAME]
-    collection = db["credentials"]
-    
-    # Invalidate all existing credentials
-    collection.update_many({}, {"$set": {"is_valid": False}})
-    
-    # Build user ID from cookie values
-    user_id = "".join(cookies.get(k, "") for k in ["a1", "webId", "gid", "web_session"])
+    # Build user ID from cookie values (same logic as before)
+    user_id = cookies.get("web_session", "")[:24] or "unknown"
     
     # Prepare document
+    now = datetime.now(timezone.utc).isoformat()
     doc = {
         "user_id": user_id,
         "cookies": cookies,
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
+        "x_s_common": None,
+        "created_at": now,
+        "updated_at": now,
         "is_valid": True
     }
     
-    collection.insert_one(doc)
-    client.close()
+    # Write to JSON file
+    with open(COOKIE_FILE, 'w', encoding='utf-8') as f:
+        json.dump(doc, f, indent=2, ensure_ascii=False)
     
     return user_id
 
@@ -48,13 +46,21 @@ def invalidate_all_credentials() -> int:
     Invalidate all stored credentials.
     
     Returns:
-        Number of documents updated
+        1 if credentials were invalidated, 0 otherwise
     """
-    client = MongoClient(MONGODB_URI)
-    db = client[DATABASE_NAME]
-    collection = db["credentials"]
+    if not COOKIE_FILE.exists():
+        return 0
     
-    result = collection.update_many({}, {"$set": {"is_valid": False}})
-    client.close()
+    with open(COOKIE_FILE, 'r', encoding='utf-8') as f:
+        doc = json.load(f)
     
-    return result.modified_count
+    if doc.get("is_valid"):
+        doc["is_valid"] = False
+        doc["updated_at"] = datetime.now(timezone.utc).isoformat()
+        
+        with open(COOKIE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(doc, f, indent=2, ensure_ascii=False)
+        
+        return 1
+    
+    return 0

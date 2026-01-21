@@ -84,11 +84,17 @@ async def generate_signature(request: SignRequest):
                 # parse_qs returns lists, take first value
                 params[key] = values[0] if values else ""
         
-        # Debug log
-        import logging
-        logging.info(f"[Agent] URI: {request.uri} -> path: {uri_path}, params: {params}")
+        # Debug log - write to stderr since stdout may be captured
+        import sys
+        import json
+        print(f"[Agent] URI: {request.uri} -> path: {uri_path}, params: {params}", file=sys.stderr)
+        if request.payload:
+            # 将 payload 序列化为字符串，确保与 Rust 发送的 body 一致
+            payload_str = json.dumps(request.payload, ensure_ascii=False, separators=(',', ':'))
+            print(f"[Agent] Payload for signing: {payload_str}", file=sys.stderr)
         
         # Generate signatures using xhshow
+        # 注意：xhshow 需要 dict，不是字符串。但如果 xhshow 内部序列化方式不同，签名会不匹配
         result = xhs_client.sign_headers(
             method=request.method.upper(),
             uri=uri_path,  # Use pure path
@@ -96,6 +102,10 @@ async def generate_signature(request: SignRequest):
             params=params if params else None,
             payload=request.payload
         )
+        
+        # DEBUG: 打印 xhshow 返回的所有键
+        print(f"[Agent] xhshow returned keys: {list(result.keys())}", file=sys.stderr)
+        print(f"[Agent] x-xray-traceid: {result.get('x-xray-traceid', 'MISSING')}", file=sys.stderr)
         
         return SignResponse(
             success=True,
@@ -216,6 +226,123 @@ async def get_guest_cookies():
         success=False,
         error="Unexpected error in retry loop"
     )
+
+
+
+class SyncCookiesRequest(BaseModel):
+    web_session: str
+
+
+@app.post("/sync-login-cookies", response_model=GuestCookiesResponse)
+async def sync_login_cookies(request: SyncCookiesRequest):
+    """
+    Sync full browser cookies using a valid web_session.
+    
+    Args:
+        request: SyncCookiesRequest containing 'web_session'
+        
+    Returns:
+        Full dictionary of browser cookies including risk control cookies (acw_tc, etc.)
+    """
+    import logging
+    
+    web_session = request.web_session
+    if not web_session:
+        return GuestCookiesResponse(success=False, error="Missing web_session")
+        
+    logging.info(f"[Cookie Sync] Starting sync for session: {web_session[:6]}...")
+    
+    try:
+        from playwright.async_api import async_playwright
+        
+        async with async_playwright() as p:
+            # 启动无头模式（Headless），验证是否触发风控
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled", 
+                    "--no-sandbox",
+                    "--disable-infobars"
+                ],
+                timeout=60000
+            )
+            
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+                viewport={"width": 1920, "height": 1080}
+            )
+            
+            # 注入 stealth 脚本（简化版）以绕过简单检测
+            await context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            """)
+            
+            # Set the login cookie first
+            await context.add_cookies([{
+                "name": "web_session",
+                "value": web_session,
+                "domain": ".xiaohongshu.com",
+                "path": "/"
+            }])
+            
+            page = await context.new_page()
+            
+            try:
+                # 1. Visit homepage
+                logging.info("[Cookie Sync] Visiting Home...")
+                await page.goto(
+                    "https://www.xiaohongshu.com/", 
+                    wait_until="domcontentloaded",
+                    timeout=45000
+                )
+                
+                # 2. Trigger Search (User Hypothesis)
+                try:
+                    logging.info("[Cookie Sync] Clicking search box...")
+                    search_selector = "input.search-input"
+                    if not await page.query_selector(search_selector):
+                        search_selector = "input[type='text']"
+                    
+                    if await page.query_selector(search_selector):
+                        await page.click(search_selector, timeout=5000)
+                        await asyncio.sleep(2)
+                except Exception as e:
+                    logging.warning(f"[Cookie Sync] Search interaction error: {e}")
+
+                except Exception as e:
+                    logging.warning(f"[Cookie Sync] Search interaction error: {e}")
+
+                # 3. Wait for network idle (Critical for background layout requests)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=5000)
+                except:
+                    pass
+
+            finally:
+                # Always capture cookies
+                cookies_list = await context.cookies()
+                # DEBUG: Print all found cookie names
+                names = [c['name'] for c in cookies_list]
+                logging.info(f"[Cookie Sync] FINAL Captured Cookies ({len(names)}): {names}")
+                
+                await browser.close()
+            
+            cookies_dict = {c['name']: c['value'] for c in cookies_list}
+            logging.info(f"[Cookie Sync] Successfully synced {len(cookies_dict)} cookies")
+            
+            return GuestCookiesResponse(
+                success=True,
+                cookies=cookies_dict
+            )
+            
+    except Exception as e:
+        logging.error(f"[Cookie Sync] Failed: {e}")
+        return GuestCookiesResponse(
+            success=False,
+            error=str(e)
+        )
 
 
 @app.get("/health")

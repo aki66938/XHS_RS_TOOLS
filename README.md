@@ -75,6 +75,9 @@ python client_demo.py
 
 | 版本 | 日期 | 更新内容 | 
 | :--- | :--- | :--- | 
+| **v1.8.0** | 2026-01-22 | **存储轻量化 & 搜索风控突破** | 
+| | | - 💾 **去数据库化**: 彻底移除 MongoDB 依赖，改用本地 JSON 文件存储 Cookie，实现开箱即用 | 
+| | | - 🔓 **461 修复**: 引入浏览器 Cookie 同步机制，解决 Search/OneBox 接口风控问题 | 
 | **v1.7.0** | 2026-01-21 | **媒体采集功能 (视频+图片)** | 
 | | | - 🎬 **视频采集**: 新增 `/api/note/video` 解析视频笔记，返回多画质 CDN 直链 | 
 | | | - 🖼️ **图片采集**: 新增 `/api/note/images` 解析图文笔记，返回有水印/无水印两个版本 | 
@@ -137,9 +140,9 @@ python client_demo.py
 | **Notification** | `/api/notification/likes` | ✅ | 获取赞和收藏通知 ([📖 分页指南](doc/likes_pagination.md)) |
 | **Note** | `/api/note/page` | ✅ | 获取笔记评论列表 ([📖 分页指南](doc/comment_pagination.md)) |
 | **Note** | `/api/note/detail` | ✅ |  获取笔记完整内容 |
-| **Media** | `/api/note/video` | ✅ (v1.7) | 视频笔记地址解析（多画质 CDN 直链） |
-| **Media** | `/api/note/images` | ✅ (v1.7) | 图文笔记地址解析（有水印/无水印） |
-| **Media** | `/api/media/download` | ✅ (v1.7) | 通用媒体下载（视频/图片到本地） |
+| **Media** | `/api/note/video` | ✅ | 视频笔记地址解析（多画质 CDN 直链） |
+| **Media** | `/api/note/images` | ✅ | 图文笔记地址解析（有水印/无水印） |
+| **Media** | `/api/media/download` | ✅ | 通用媒体下载（视频/图片到本地） |
 
 ## 📚 接口文档 (API Docs)
 

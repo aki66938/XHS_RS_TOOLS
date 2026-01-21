@@ -314,13 +314,80 @@ pub async fn check_qrcode_status(
         }
     }
     
+    
     let status_response: QrCodeStatusResponse = response.json().await?;
     
-    let cookies_to_return = if new_cookies.is_empty() {
-        None
+    // 如果登录成功，执行阻塞式 Cookie 同步
+    let cookies_to_return = if let Some(data) = &status_response.data {
+        if data.code_status == Some(2) {
+            tracing::info!("Login confirmed! Starting blocking cookie synchronization...");
+            
+            // 尝试获取 web_session
+            let web_session = new_cookies.get("web_session")
+                .or_else(|| cookies.get("web_session"))
+                .cloned();
+                
+            if let Some(session) = web_session {
+                match sync_login_cookies(&session).await {
+                    Ok(synced_cookies) => {
+                        tracing::info!("Cookie synchronization successful! Got {} cookies.", synced_cookies.len());
+                        // 使用同步回来的完整 cookies 覆盖 set-cookie 中的非完整 cookies
+                        Some(synced_cookies)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Cookie synchronization failed: {}. Falling back to basic cookies.", e);
+                        if new_cookies.is_empty() { None } else { Some(new_cookies) }
+                    }
+                }
+            } else {
+                tracing::warn!("Login success but no web_session found. Skipping sync.");
+                if new_cookies.is_empty() { None } else { Some(new_cookies) }
+            }
+        } else {
+            if new_cookies.is_empty() { None } else { Some(new_cookies) }
+        }
     } else {
-        Some(new_cookies)
+        if new_cookies.is_empty() { None } else { Some(new_cookies) }
     };
     
     Ok((status_response, cookies_to_return))
+}
+
+/// Sync full login cookies from Python Agent (Headless Browser)
+pub async fn sync_login_cookies(web_session: &str) -> Result<HashMap<String, String>> {
+    let client = reqwest::Client::new();
+    let url = format!("{}/sync-login-cookies", AGENT_URL);
+    
+    let mut payload = HashMap::new();
+    payload.insert("web_session", web_session);
+    
+    tracing::info!("Syncing cookies for session: {}...", &web_session[..6]);
+    
+    // 设置较长的超时时间，因为包含浏览器启动和访问过程
+    let response = client
+        .post(&url)
+        .json(&payload)
+        .timeout(std::time::Duration::from_secs(90))
+        .send()
+        .await
+        .map_err(|e| anyhow!("Failed to connect to Agent sync: {}", e))?;
+        
+        
+    let status = response.status();
+    let text = response.text().await
+        .map_err(|e| anyhow!("Failed to get Agent sync response body: {}", e))?;
+        
+    if !status.is_success() {
+        tracing::error!("Agent sync returned error status: {} - Body: {}", status, text);
+        return Err(anyhow!("Agent sync failed with status {}: {}", status, text));
+    }
+
+    let result: AgentGuestCookiesResponse = serde_json::from_str(&text)
+        .map_err(|e| anyhow!("Failed to parse Agent sync response: {} - Body: {}", e, text))?;
+        
+    if !result.success {
+        return Err(anyhow!("Agent sync error: {}", result.error.unwrap_or_default()));
+    }
+    
+    result.cookies.ok_or_else(|| anyhow!("No cookies returned from sync"))
 }

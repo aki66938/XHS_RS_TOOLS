@@ -21,3 +21,7 @@ debug_qr.png
 doc/api_reference.md
 doc/reverse_engineering_research.md
 doc/feature_todo_*.md
+
+# Credentials & Cookies
+cookie.json
+cookie-bak.json

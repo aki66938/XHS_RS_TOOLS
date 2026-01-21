@@ -105,7 +105,8 @@ def poll_qrcode_status(timeout=120):
     while time.time() - start_time < timeout:
         try:
             req = urllib.request.Request(f"{BASE_URL}/api/auth/qrcode/status")
-            with urllib.request.urlopen(req, timeout=10) as response:
+            # Increase timeout to 60s to allow blocking cookie sync (browser launch takes time)
+            with urllib.request.urlopen(req, timeout=60) as response:
                 data = json.loads(response.read().decode('utf-8'))
             
             if data.get("success"):

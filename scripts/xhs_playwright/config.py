@@ -2,9 +2,10 @@
 Configuration constants for XHS Playwright automation
 """
 
-# MongoDB Configuration
-MONGODB_URI = "mongodb://localhost:27017"
-DATABASE_NAME = "xhs_tools"
+from pathlib import Path
+
+# Cookie file path (project root)
+COOKIE_FILE = Path(__file__).parent.parent.parent / "cookie.json"
 
 # XHS URLs
 XHS_EXPLORE_URL = "https://www.xiaohongshu.com/explore"
@@ -50,4 +51,3 @@ QR_SELECTORS = {
     "login_button": 'div.login-btn',
     "login_container": '.login-container',
 }
-

@@ -38,12 +38,9 @@ pub struct AppState {
 // ============================================================================
 
 pub async fn start_server() -> anyhow::Result<()> {
-    // Initialize MongoDB connection
-    let mongodb_uri = std::env::var("MONGODB_URI")
-        .unwrap_or_else(|_| "mongodb://localhost:27017".to_string());
-    
-    tracing::info!("Initializing AuthService with MongoDB...");
-    let auth = Arc::new(AuthService::new(&mongodb_uri).await?);
+    // Initialize AuthService (uses JSON file storage)
+    tracing::info!("Initializing AuthService with JSON file storage...");
+    let auth = Arc::new(AuthService::new().await?);
     
     let client = XhsClient::new()?;
     let api = XhsApiClient::new(client, auth.clone());

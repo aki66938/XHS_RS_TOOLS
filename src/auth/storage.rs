@@ -1,104 +1,96 @@
+//! JSON file-based credential storage
+//!
+//! Stores credentials in `cookie.json` in the project root directory.
+
 use anyhow::Result;
-use mongodb::{bson::doc, options::ClientOptions, Client, Collection};
+use std::path::PathBuf;
 use tracing::{info, warn};
 
 use super::credentials::UserCredentials;
 
-const DATABASE_NAME: &str = "xhs_tools";
-const COLLECTION_NAME: &str = "credentials";
+const COOKIE_FILE: &str = "cookie.json";
 
-/// MongoDB-based credential storage
+/// JSON file-based credential storage
 pub struct CredentialStorage {
-    database: mongodb::Database,
-    collection: Collection<UserCredentials>,
+    file_path: PathBuf,
 }
 
 impl CredentialStorage {
-    /// Create a new storage instance connected to MongoDB
-    pub async fn new(mongodb_uri: &str) -> Result<Self> {
-        info!("Connecting to MongoDB at {}", mongodb_uri);
-        
-        let client_options = ClientOptions::parse(mongodb_uri).await?;
-        let client = Client::with_options(client_options)?;
-        
-        // Ping to verify connection
-        client
-            .database("admin")
-            .run_command(doc! { "ping": 1 }, None)
-            .await?;
-        
-        info!("Successfully connected to MongoDB");
-        
-        let database = client.database(DATABASE_NAME);
-        let collection = database.collection::<UserCredentials>(COLLECTION_NAME);
-        
-        Ok(Self { database, collection })
+    /// Create a new storage instance
+    pub async fn new() -> Result<Self> {
+        let file_path = PathBuf::from(COOKIE_FILE);
+        info!("Using JSON credential storage: {}", file_path.display());
+        Ok(Self { file_path })
     }
     
     /// Get the currently active (valid) credentials
     pub async fn get_active_credentials(&self) -> Result<Option<UserCredentials>> {
-        let filter = doc! { "is_valid": true };
-        let result = self.collection.find_one(filter, None).await?;
-        
-        if let Some(ref creds) = result {
-            info!("Found active credentials for user: {}", creds.user_id);
-        } else {
-            info!("No active credentials found");
+        if !self.file_path.exists() {
+            info!("No cookie.json found");
+            return Ok(None);
         }
         
-        Ok(result)
+        let content = tokio::fs::read_to_string(&self.file_path).await?;
+        let creds: UserCredentials = serde_json::from_str(&content)?;
+        
+        if creds.is_valid {
+            info!("Found active credentials for user: {}", creds.user_id);
+            Ok(Some(creds))
+        } else {
+            info!("Found credentials but marked as invalid");
+            Ok(None)
+        }
     }
     
     /// Save or update credentials
     pub async fn save_credentials(&self, creds: &UserCredentials) -> Result<()> {
-        // First, invalidate any existing credentials
-        self.invalidate_all().await?;
-        
-        // Insert new credentials
-        self.collection.insert_one(creds, None).await?;
-        info!("Saved new credentials for user: {}", creds.user_id);
-        
+        let content = serde_json::to_string_pretty(creds)?;
+        tokio::fs::write(&self.file_path, content).await?;
+        info!("Saved credentials for user: {} to {}", creds.user_id, self.file_path.display());
         Ok(())
     }
     
     /// Mark all credentials as invalid
     pub async fn invalidate_all(&self) -> Result<()> {
-        let filter = doc! { "is_valid": true };
-        let update = doc! { "$set": { "is_valid": false } };
+        if !self.file_path.exists() {
+            return Ok(());
+        }
         
-        let result = self.collection.update_many(filter, update, None).await?;
+        let content = tokio::fs::read_to_string(&self.file_path).await?;
+        let mut creds: UserCredentials = serde_json::from_str(&content)?;
         
-        if result.modified_count > 0 {
-            warn!("Invalidated {} existing credentials", result.modified_count);
+        if creds.is_valid {
+            creds.invalidate();
+            let content = serde_json::to_string_pretty(&creds)?;
+            tokio::fs::write(&self.file_path, content).await?;
+            warn!("Invalidated credentials for user: {}", creds.user_id);
         }
         
         Ok(())
     }
     
-    /// Invalidate credentials for a specific user
+    /// Invalidate credentials for a specific user (same as invalidate_all for single-user storage)
     pub async fn invalidate_user(&self, user_id: &str) -> Result<()> {
-        let filter = doc! { "user_id": user_id };
-        let update = doc! { "$set": { "is_valid": false } };
+        if !self.file_path.exists() {
+            return Ok(());
+        }
         
-        self.collection.update_many(filter, update, None).await?;
-        warn!("Invalidated credentials for user: {}", user_id);
+        let content = tokio::fs::read_to_string(&self.file_path).await?;
+        let mut creds: UserCredentials = serde_json::from_str(&content)?;
+        
+        if creds.user_id == user_id && creds.is_valid {
+            creds.invalidate();
+            let content = serde_json::to_string_pretty(&creds)?;
+            tokio::fs::write(&self.file_path, content).await?;
+            warn!("Invalidated credentials for user: {}", user_id);
+        }
         
         Ok(())
     }
     
-    /// Get API signature for a specific endpoint
-    pub async fn get_api_signature(&self, endpoint: &str) -> Result<Option<super::credentials::ApiSignature>> {
-        let sig_collection = self.database.collection::<super::credentials::ApiSignature>("api_signatures");
-        
-        let filter = doc! { "endpoint": endpoint, "is_valid": true };
-        let result = sig_collection.find_one(filter, None).await?;
-        
-        if let Some(ref sig) = result {
-            info!("Found signature for endpoint: {}", sig.endpoint);
-        } else {
-            info!("No signature found for endpoint: {}", endpoint);
-        }
-        
-        Ok(result)
+    /// Get API signature for a specific endpoint (legacy, returns None for JSON storage)
+    pub async fn get_api_signature(&self, _endpoint: &str) -> Result<Option<super::credentials::ApiSignature>> {
+        // API signatures are not stored in JSON storage (they are generated on-demand via Agent)
+        Ok(None)
     }
 }

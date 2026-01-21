@@ -69,15 +69,30 @@ fn generate_request_id() -> String {
 
 /// 搜索笔记列表
 pub async fn search_notes(api: &XhsApiClient, mut req: SearchNotesRequest) -> Result<SearchNotesResponse> {
-    // 补全 search_id (使用简单格式，21字符)
-    // 如果没有提供或格式无效（如 demo 开头），则自动生成
-    if req.search_id.is_none() || req.search_id.as_ref().map(|s| s.starts_with("demo")).unwrap_or(false) {
-        req.search_id = Some(generate_simple_search_id());
+    // 自动补全 search_id (格式: xxx@xxx)
+    if req.search_id.is_none() || req.search_id.as_ref().is_some_and(|s| s.is_empty()) {
+        req.search_id = Some(generate_search_id());
     }
+
+    // 使用最终的 check_id
     let used_search_id = req.search_id.clone();
     
     let path = "/api/sns/web/v1/search/notes";
-    let payload = serde_json::to_value(&req)?;
+    
+    // 使用 json! 宏手动构造 payload 以确保字段顺序匹配浏览器指纹
+    // 顺序: keyword → page → page_size → search_id → sort → note_type → ext_flags → filters → geo → image_formats
+    let payload = serde_json::json!({
+        "keyword": req.keyword,
+        "page": req.page,
+        "page_size": req.page_size,
+        "search_id": req.search_id,
+        "sort": req.sort,
+        "note_type": req.note_type,
+        "ext_flags": req.ext_flags,
+        "filters": req.filters,
+        "geo": req.geo,
+        "image_formats": req.image_formats
+    });
     
     // 使用 post_algo 进行签名和发送
     let text = api.post_algo(path, payload).await?;

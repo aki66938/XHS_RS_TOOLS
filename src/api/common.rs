@@ -31,7 +31,7 @@ fn endpoint_to_uri(endpoint_key: &str) -> Option<&'static str> {
         "user_selfinfo" => Some("/api/sns/web/v1/user/selfinfo"),
         // Search
         "search_trending" => Some("/api/sns/web/v1/search/querytrending"),
-        // Notifications (需要 num 参数)
+        "search_notes" => Some("/api/sns/web/v1/search/notes"),
         "notification_mentions" => Some("/api/sns/web/v1/you/mentions?num=20&cursor="),
         "notification_connections" => Some("/api/sns/web/v1/you/connections?num=20&cursor="),
         "notification_likes" => Some("/api/sns/web/v1/you/likes?num=20&cursor="),
@@ -366,6 +366,9 @@ impl XhsApiClient {
             let url = format!("https://edith.xiaohongshu.com{}", uri);
             let body = serde_json::to_string(&payload)?;
             
+            // DEBUG: 输出实际发送的 body
+            tracing::info!("[XhsApiClient] POST {} body: {}", endpoint_key, body);
+            
             match self.get_algo_signature("POST", uri, &cookie_str, Some(payload)).await {
                 Ok(signature) => {
                     tracing::info!("[XhsApiClient] POST {} with custom payload using ALGO", endpoint_key);
@@ -497,7 +500,9 @@ impl XhsApiClient {
             .post(url)
             .header("accept", "application/json, text/plain, */*")
             .header("accept-language", "zh-CN,zh;q=0.9")
+            .header("cache-control", "no-cache")  // 修复：添加缺失的 header
             .header("content-type", "application/json;charset=UTF-8")
+            .header("pragma", "no-cache")  // 修复：添加缺失的 header
             .header("priority", "u=1, i")
             .header("sec-ch-ua", r#""Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24""#)
             .header("sec-ch-ua-mobile", "?0")

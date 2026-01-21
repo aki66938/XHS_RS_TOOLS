@@ -15,15 +15,15 @@ pub struct AuthService {
 }
 
 impl AuthService {
-    /// Create a new authentication service
-    pub async fn new(mongodb_uri: &str) -> Result<Self> {
-        let storage = CredentialStorage::new(mongodb_uri).await?;
+    /// Create a new authentication service (uses JSON file storage)
+    pub async fn new() -> Result<Self> {
+        let storage = CredentialStorage::new().await?;
         
         // Try to load existing credentials
         let cached = storage.get_active_credentials().await?;
         
         if cached.is_some() {
-            info!("Loaded existing credentials from database");
+            info!("Loaded existing credentials from cookie.json");
         }
         
         Ok(Self {
@@ -32,7 +32,7 @@ impl AuthService {
         })
     }
     
-    /// Get current credentials passively (check cache and DB only)
+    /// Get current credentials passively (check cache and file only)
     /// Returns None if no valid credentials found, does NOT trigger login
     pub async fn try_get_credentials(&self) -> Result<Option<UserCredentials>> {
         // Check cache first
@@ -45,7 +45,7 @@ impl AuthService {
             }
         }
         
-        // Try to load from database
+        // Try to load from file
         if let Some(creds) = self.storage.get_active_credentials().await? {
             let mut cache = self.cached_credentials.write().await;
             *cache = Some(creds.clone());
@@ -66,7 +66,7 @@ impl AuthService {
         info!("No valid credentials found, triggering browser login...");
         self.trigger_login().await?;
         
-        // Reload credentials from database after login
+        // Reload credentials from file after login
         if let Some(creds) = self.storage.get_active_credentials().await? {
             let mut cache = self.cached_credentials.write().await;
             *cache = Some(creds.clone());
@@ -83,10 +83,10 @@ impl AuthService {
         println!("║  即将打开浏览器，请在浏览器中扫码登录                        ║");
         println!("╚════════════════════════════════════════════════════════════╝\n");
         
-        // Run Python Playwright script (which saves to MongoDB directly)
+        // Run Python Playwright script (which saves to cookie.json)
         trigger_python_login().await?;
         
-        info!("Login successful, credentials saved to MongoDB");
+        info!("Login successful, credentials saved to cookie.json");
         
         Ok(())
     }
@@ -105,7 +105,7 @@ impl AuthService {
     
     /// Save new credentials (used after QR code login success)
     pub async fn save_credentials(&self, creds: &UserCredentials) -> Result<()> {
-        // Save to MongoDB
+        // Save to JSON file
         self.storage.save_credentials(creds).await?;
         
         // Update cache
@@ -116,7 +116,7 @@ impl AuthService {
         Ok(())
     }
     
-    /// Get captured signature for a specific endpoint
+    /// Get captured signature for a specific endpoint (legacy, returns None)
     pub async fn get_endpoint_signature(&self, endpoint: &str) -> Result<Option<super::credentials::ApiSignature>> {
         self.storage.get_api_signature(endpoint).await
     }
@@ -134,3 +134,4 @@ impl AuthService {
         Ok(("".to_string(), x_t, creds.x_s_common.unwrap_or_default()))
     }
 }
+

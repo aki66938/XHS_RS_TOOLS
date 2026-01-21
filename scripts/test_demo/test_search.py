@@ -48,18 +48,30 @@ def test_search_recommend():
         print_error(f"Error: {e}")
 
 
+import random
+import string
+
+def generate_random_id(length=22):
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
+
 def test_search_notes() -> str:
-    """测试搜索笔记 API，返回服务端生成的 search_id 供后续请求使用"""
+    """测试搜索笔记 API，使用随机生成的 search_id"""
     print("\n[API] POST /api/search/notes (搜索笔记)")
-    search_id = ""  # 由服务端生成
+    
+    # 随机生成 search_id (模拟真实请求: xxx@xxx)
+    test_search_id = f"{generate_random_id()}@{generate_random_id()}"
+    test_keyword = "鬼灭之刃"
+    
+    print(f"    Testing with Random Search ID: {test_search_id}")
+    
     try:
         payload = {
-            "keyword": "湖州旅游",
+            "keyword": test_keyword,
             "page": 1,
             "page_size": 20,
+            "search_id": test_search_id,  # 使用固定的 search_id
             "sort": "general",
             "note_type": 0,
-            # 不发送 search_id，让 Rust 服务端生成
             "ext_flags": [],
             "filters": [
                 {"tags": ["general"], "type": "sort_type"},
@@ -89,7 +101,7 @@ def test_search_notes() -> str:
             print_warning(data.get("msg", "无数据"))
     except Exception as e:
         print_error(f"Error: {e}")
-    return search_id
+    return test_search_id  # 返回固定的 search_id 供后续测试
 
 
 
@@ -101,7 +113,7 @@ def test_search_onebox(search_id: str):
         return
     try:
         payload = {
-            "keyword": "湖州旅游",
+            "keyword": "鬼灭之刃",
             "search_id": search_id,
             "biz_type": "web_search_user"
         }
@@ -126,7 +138,7 @@ def test_search_user(search_id: str):
     print("\n[API] POST /api/search/usersearch (搜索用户)")
     try:
         payload = {
-            "keyword": "湖州旅游",
+            "keyword": "鬼灭之刃",
             "search_id": search_id,
             "page": 1,
             "page_size": 15,
@@ -159,7 +171,7 @@ def test_search_filter(search_id: str):
         return
     print("\n[API] GET /api/search/filter")
     try:
-        keyword = urllib.parse.quote("湖州旅游")
+        keyword = urllib.parse.quote("鬼灭之刃")
         sid = urllib.parse.quote(search_id)
         url = f"{BASE_URL}/api/search/filter?keyword={keyword}&search_id={sid}"
         with urllib.request.urlopen(url, timeout=10) as response:
