@@ -5,26 +5,45 @@ A FastAPI-based microservice that provides XHS API signature generation
 using the xhshow library. This server acts as a Signature Gateway for
 the Rust Core, enabling algorithm-first API interactions.
 
+Migrated to undetected-chromedriver (UC) for better anti-detection in Docker.
+
 Usage:
     python scripts/agent_server.py
     
 Endpoints:
     POST /sign - Generate signatures for a given request
-    GET /guest-cookies - Get guest cookies via Playwright
+    GET /guest-cookies - Get guest cookies via UC
+    POST /sync-login-cookies - Sync full browser cookies via UC
     GET /health - Health check
 """
 import asyncio
 import json
 import uvicorn
+import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 from xhshow import Xhshow
+import logging
+import time
+import undetected_chromedriver as uc
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("agent_server")
+
+logger.info(f"Agent Server Starting...")
+logger.info(f"HTTP_PROXY: {os.environ.get('HTTP_PROXY')}")
+logger.info(f"HTTPS_PROXY: {os.environ.get('HTTPS_PROXY')}")
+logger.info(f"NO_PROXY: {os.environ.get('NO_PROXY')}")
 
 app = FastAPI(
     title="XHS Signature Agent",
-    description="Pure Algorithm Signature Gateway for Xiaohongshu API",
-    version="1.1.0"
+    description="Pure Algorithm Signature Gateway for Xiaohongshu API (UC Powered)",
+    version="1.3.0"
 )
 
 # Initialize Xhshow client (singleton)
@@ -33,11 +52,11 @@ xhs_client = Xhshow()
 
 class SignRequest(BaseModel):
     """Request model for signature generation"""
-    method: str  # GET or POST
-    uri: str  # API path, e.g., /api/sns/web/v1/homefeed
-    cookies: Dict[str, str]  # Cookie dictionary
-    params: Optional[Dict[str, Any]] = None  # Query parameters (for GET)
-    payload: Optional[Dict[str, Any]] = None  # Request body (for POST)
+    method: str
+    uri: str
+    cookies: Dict[str, str]
+    params: Optional[Dict[str, Any]] = None
+    payload: Optional[Dict[str, Any]] = None
 
 
 class SignResponse(BaseModel):
@@ -60,52 +79,25 @@ class GuestCookiesResponse(BaseModel):
 
 @app.post("/sign", response_model=SignResponse)
 async def generate_signature(request: SignRequest):
-    """
-    Generate XHS API signatures for a given request.
-    
-    This endpoint uses the xhshow library to compute the required
-    signature headers (x-s, x-t, x-s-common, etc.) that are needed
-    to make authenticated requests to the XHS API.
-    
-    Note: If the URI contains query parameters (e.g., ?num=20&cursor=),
-    they will be automatically extracted and merged with the params field.
-    """
+    """Generate XHS API signatures"""
     try:
-        # Parse URI to extract path and query parameters
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(request.uri)
-        uri_path = parsed.path  # Pure path without query string
+        uri_path = parsed.path
         
-        # Merge query parameters from URI with explicit params
         params = dict(request.params) if request.params else {}
         if parsed.query:
             query_params = parse_qs(parsed.query)
             for key, values in query_params.items():
-                # parse_qs returns lists, take first value
                 params[key] = values[0] if values else ""
         
-        # Debug log - write to stderr since stdout may be captured
-        import sys
-        import json
-        print(f"[Agent] URI: {request.uri} -> path: {uri_path}, params: {params}", file=sys.stderr)
-        if request.payload:
-            # 将 payload 序列化为字符串，确保与 Rust 发送的 body 一致
-            payload_str = json.dumps(request.payload, ensure_ascii=False, separators=(',', ':'))
-            print(f"[Agent] Payload for signing: {payload_str}", file=sys.stderr)
-        
-        # Generate signatures using xhshow
-        # 注意：xhshow 需要 dict，不是字符串。但如果 xhshow 内部序列化方式不同，签名会不匹配
         result = xhs_client.sign_headers(
             method=request.method.upper(),
-            uri=uri_path,  # Use pure path
+            uri=uri_path,
             cookies=request.cookies,
             params=params if params else None,
             payload=request.payload
         )
-        
-        # DEBUG: 打印 xhshow 返回的所有键
-        print(f"[Agent] xhshow returned keys: {list(result.keys())}", file=sys.stderr)
-        print(f"[Agent] x-xray-traceid: {result.get('x-xray-traceid', 'MISSING')}", file=sys.stderr)
         
         return SignResponse(
             success=True,
@@ -116,117 +108,115 @@ async def generate_signature(request: SignRequest):
             x_xray_traceid=result.get("x-xray-traceid")
         )
     except Exception as e:
-        return SignResponse(
-            success=False,
-            error=str(e)
-        )
+        return SignResponse(success=False, error=str(e))
 
+
+def get_chrome_options():
+    options = uc.ChromeOptions()
+    # options.add_argument('--headless=new') # Headless often triggers anti-bot, but might be needed in Docker.
+    # For Docker without Xvfb, we MUST use headless. 
+    # UC's headless handling is tricky. Let's try standard headless first.
+    # Headless mode REMOVED for Docker with Xvfb (Selenium Base Image)
+    # The base image provides Xvfb on DISPLAY=:99
+    # options.add_argument('--headless=new') 
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--lang=zh-CN")
+    
+    # Explicitly set binary location for Selenium Base Image
+    # In selenium/standalone-chrome, chrome is usually at /opt/google/chrome/google-chrome
+    # or /usr/bin/google-chrome
+    if os.path.exists("/opt/google/chrome/google-chrome"):
+        options.binary_location = "/opt/google/chrome/google-chrome"
+    elif os.path.exists("/usr/bin/google-chrome"):
+        options.binary_location = "/usr/bin/google-chrome"
+    
+    # Explicitly configure proxy from Environment
+    # Chrome sometimes ignores Env Vars if not set specifically
+    proxy_url = os.environ.get('HTTP_PROXY')
+    if proxy_url:
+        logger.info(f"Setting Chrome Proxy: {proxy_url}")
+        options.add_argument(f"--proxy-server={proxy_url}")
+        
+    no_proxy = os.environ.get('NO_PROXY')
+    if no_proxy:
+         logger.info(f"Setting Chrome Bypass: {no_proxy}")
+         options.add_argument(f"--proxy-bypass-list={no_proxy}")
+
+    return options
+
+def get_driver_executable_path():
+    # Helper to find chromedriver in common locations
+    candidates = [
+        "/usr/bin/chromedriver",
+        "/usr/local/bin/chromedriver",
+        "/opt/selenium/chromedriver",
+        "/usr/bin/chromedriver-original" # Sometimes moved
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
 
 @app.get("/guest-cookies", response_model=GuestCookiesResponse)
 async def get_guest_cookies():
-    """
-    Get guest cookies from xiaohongshu.com using Playwright.
-    
-    This endpoint launches a headless browser, visits the XHS homepage,
-    waits for JavaScript to generate cookies, and returns them.
-    
-    Includes retry mechanism for improved reliability.
-    
-    Returns the essential cookies needed for QR code login:
-    - a1, webId, gid, web_session, websectiga, acw_tc, etc.
-    """
-    import logging
-    
-    max_retries = 3
-    
-    for attempt in range(max_retries):
-        try:
-            from playwright.async_api import async_playwright
-            
-            logging.info(f"[Guest Cookies] Attempt {attempt + 1}/{max_retries}")
-            
-            async with async_playwright() as p:
-                # Launch headless browser with longer timeout
-                browser = await p.chromium.launch(
-                    headless=True,
-                    timeout=60000  # 60 seconds for browser launch
-                )
-                
-                context = await browser.new_context(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
-                    viewport={"width": 1920, "height": 1080}
-                )
-                
-                # Set default timeouts
-                context.set_default_timeout(30000)
-                context.set_default_navigation_timeout(60000)
-                
-                page = await context.new_page()
-                
-                try:
-                    # Visit homepage with timeout and multiple wait strategies
-                    await page.goto(
-                        "https://www.xiaohongshu.com/", 
-                        wait_until="domcontentloaded",  # Faster than networkidle
-                        timeout=45000
-                    )
-                    
-                    # Wait for cookies to be generated
-                    await asyncio.sleep(3)
-                    
-                    # Try to wait for network idle if possible
-                    try:
-                        await page.wait_for_load_state("networkidle", timeout=10000)
-                    except:
-                        pass  # Ignore if networkidle times out
-                    
-                    # Additional wait for JS execution
-                    await asyncio.sleep(2)
-                    
-                finally:
-                    # Always extract cookies and close browser
-                    cookies_list = await context.cookies()
-                    await browser.close()
-                
-                # Convert to dictionary
-                cookies_dict = {c['name']: c['value'] for c in cookies_list}
-                
-                logging.info(f"[Guest Cookies] Got {len(cookies_dict)} cookies")
-                
-                # Verify essential cookies exist
-                required = ['a1', 'webId', 'gid', 'web_session']
-                missing = [k for k in required if k not in cookies_dict]
-                
-                if missing:
-                    if attempt < max_retries - 1:
-                        logging.warning(f"[Guest Cookies] Missing cookies: {missing}, retrying...")
-                        await asyncio.sleep(2)
-                        continue
-                    return GuestCookiesResponse(
-                        success=False,
-                        error=f"Missing required cookies after {max_retries} attempts: {missing}"
-                    )
-                
-                return GuestCookiesResponse(
-                    success=True,
-                    cookies=cookies_dict
-                )
-                
-        except Exception as e:
-            logging.error(f"[Guest Cookies] Attempt {attempt + 1} failed: {e}")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(3)  # Wait before retry
-                continue
-            return GuestCookiesResponse(
-                success=False,
-                error=f"Failed after {max_retries} attempts: {str(e)}"
-            )
-    
-    return GuestCookiesResponse(
-        success=False,
-        error="Unexpected error in retry loop"
-    )
+    """Get guest cookies using undetected-chromedriver"""
+    driver = None
+    try:
+        logger.info("[Guest Cookies] Starting UC Driver (Headed)...")
+        options = get_chrome_options()
+        
+        driver_path = get_driver_executable_path()
+        if driver_path:
+             logger.info(f"[Guest Cookies] Found chromedriver at {driver_path}, skipping download.")
+             # version_main=None usually triggers auto-check. 
+             # If we provide driver_executable_path, we usually don't need version_main check 
+             # provided the binary matches the browser. 
+             # But UC might still patch.
+             driver = uc.Chrome(options=options, driver_executable_path=driver_path, version_main=120) 
+        else:
+             logger.warning("[Guest Cookies] Chromedriver not found, attempting auto-download...")
+             driver = uc.Chrome(options=options, version_main=None) 
+        
+        logger.info("[Guest Cookies] Navigating to XHS...")
+        driver.get("https://www.xiaohongshu.com/explore")
+        
+        # Wait for page load
+        time.sleep(5)
+        
+        title = driver.title
+        logger.info(f"[Guest Cookies] Page Title: {title}")
+        
+        # Check title to verify load
+        if "xiaohongshu" not in title and "小红书" not in title:
+             logger.warning(f"[Guest Cookies] Suspicious title: {title}")
+        
+        # Get cookies
+        selenium_cookies = driver.get_cookies()
+        cookies_dict = {c['name']: c['value'] for c in selenium_cookies}
+        
+        logger.info(f"[Guest Cookies] Got {len(cookies_dict)} cookies")
+        
+        # Verify
+        required = ['a1', 'webId', 'gid', 'web_session']
+        missing = [k for k in required if k not in cookies_dict]
+        
+        if missing:
+             logger.warning(f"[Guest Cookies] Missing: {missing}")
+        
+        return GuestCookiesResponse(success=True, cookies=cookies_dict)
 
+    except Exception as e:
+        logger.error(f"[Guest Cookies] Failed: {e}")
+        return GuestCookiesResponse(success=False, error=str(e))
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
 
 
 class SyncCookiesRequest(BaseModel):
@@ -235,128 +225,71 @@ class SyncCookiesRequest(BaseModel):
 
 @app.post("/sync-login-cookies", response_model=GuestCookiesResponse)
 async def sync_login_cookies(request: SyncCookiesRequest):
-    """
-    Sync full browser cookies using a valid web_session.
-    
-    Args:
-        request: SyncCookiesRequest containing 'web_session'
-        
-    Returns:
-        Full dictionary of browser cookies including risk control cookies (acw_tc, etc.)
-    """
-    import logging
-    
+    """Sync login cookies using UC"""
     web_session = request.web_session
     if not web_session:
         return GuestCookiesResponse(success=False, error="Missing web_session")
         
-    logging.info(f"[Cookie Sync] Starting sync for session: {web_session[:6]}...")
-    
+    driver = None
     try:
-        from playwright.async_api import async_playwright
+        logger.info(f"[Cookie Sync] Starting sync for {web_session[:6]}...")
+        options = get_chrome_options()
         
-        async with async_playwright() as p:
-            # 启动无头模式（Headless），验证是否触发风控
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-blink-features=AutomationControlled", 
-                    "--no-sandbox",
-                    "--disable-infobars"
-                ],
-                timeout=60000
-            )
-            
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
-                viewport={"width": 1920, "height": 1080}
-            )
-            
-            # 注入 stealth 脚本（简化版）以绕过简单检测
-            await context.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-            """)
-            
-            # Set the login cookie first
-            await context.add_cookies([{
-                "name": "web_session",
-                "value": web_session,
-                "domain": ".xiaohongshu.com",
-                "path": "/"
-            }])
-            
-            page = await context.new_page()
-            
-            try:
-                # 1. Visit homepage
-                logging.info("[Cookie Sync] Visiting Home...")
-                await page.goto(
-                    "https://www.xiaohongshu.com/", 
-                    wait_until="domcontentloaded",
-                    timeout=45000
-                )
-                
-                # 2. Trigger Search (User Hypothesis)
-                try:
-                    logging.info("[Cookie Sync] Clicking search box...")
-                    search_selector = "input.search-input"
-                    if not await page.query_selector(search_selector):
-                        search_selector = "input[type='text']"
-                    
-                    if await page.query_selector(search_selector):
-                        await page.click(search_selector, timeout=5000)
-                        await asyncio.sleep(2)
-                except Exception as e:
-                    logging.warning(f"[Cookie Sync] Search interaction error: {e}")
-
-                except Exception as e:
-                    logging.warning(f"[Cookie Sync] Search interaction error: {e}")
-
-                # 3. Wait for network idle (Critical for background layout requests)
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=5000)
-                except:
-                    pass
-
-            finally:
-                # Always capture cookies
-                cookies_list = await context.cookies()
-                # DEBUG: Print all found cookie names
-                names = [c['name'] for c in cookies_list]
-                logging.info(f"[Cookie Sync] FINAL Captured Cookies ({len(names)}): {names}")
-                
-                await browser.close()
-            
-            cookies_dict = {c['name']: c['value'] for c in cookies_list}
-            logging.info(f"[Cookie Sync] Successfully synced {len(cookies_dict)} cookies")
-            
-            return GuestCookiesResponse(
-                success=True,
-                cookies=cookies_dict
-            )
-            
+        # Use same driver path logic as get_guest_cookies
+        driver_path = get_driver_executable_path()
+        if driver_path:
+            logger.info(f"[Cookie Sync] Found chromedriver at {driver_path}")
+            driver = uc.Chrome(options=options, driver_executable_path=driver_path, version_main=120)
+        else:
+            logger.warning("[Cookie Sync] Chromedriver not found, attempting auto-download...")
+            driver = uc.Chrome(options=options, version_main=None)
+        
+        # Domain init
+        driver.get("https://www.xiaohongshu.com/404")
+        time.sleep(2)
+        
+        # Add cookie
+        driver.add_cookie({
+            "name": "web_session",
+            "value": web_session,
+            "domain": ".xiaohongshu.com",
+            "path": "/"
+        })
+        
+        # Go to home to trigger full cookie generation
+        logger.info("[Cookie Sync] Navigating to XHS home...")
+        driver.get("https://www.xiaohongshu.com/")
+        time.sleep(5)
+        
+        selenium_cookies = driver.get_cookies()
+        cookies_dict = {c['name']: c['value'] for c in selenium_cookies}
+        
+        logger.info(f"[Cookie Sync] Got {len(cookies_dict)} cookies")
+        
+        # Verify critical cookies
+        required = ['a1', 'webId', 'web_session']
+        missing = [k for k in required if k not in cookies_dict]
+        if missing:
+            logger.warning(f"[Cookie Sync] Missing: {missing}")
+        
+        return GuestCookiesResponse(success=True, cookies=cookies_dict)
+        
     except Exception as e:
-        logging.error(f"[Cookie Sync] Failed: {e}")
-        return GuestCookiesResponse(
-            success=False,
-            error=str(e)
-        )
+        logger.error(f"[Cookie Sync] Failed: {e}")
+        return GuestCookiesResponse(success=False, error=str(e))
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
 
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "service": "xhs-signature-agent"}
+    return {"status": "healthy", "service": "xhs-signature-agent", "backend": "undetected-chromedriver"}
 
 
 if __name__ == "__main__":
-    print("Starting XHS Signature Agent Server...")
-    print("Endpoints:")
-    print("  POST /sign - Generate signatures")
-    print("  GET /guest-cookies - Get guest cookies via Playwright")
-    print("  GET /health - Health check")
-    print("  GET /docs - OpenAPI documentation")
-    uvicorn.run(app, host="127.0.0.1", port=8765)
-
+    print("Starting XHS Signature Agent Server (UC Powered)...")
+    uvicorn.run(app, host="0.0.0.0", port=8765)

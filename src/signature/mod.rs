@@ -9,9 +9,7 @@
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-/// Agent 服务配置
-const AGENT_URL: &str = "http://127.0.0.1:8765";
+use crate::config::get_agent_url;
 
 /// 签名请求结构
 #[derive(Debug, Serialize)]
@@ -85,7 +83,7 @@ impl SignatureService {
             payload,
         };
 
-        let url = format!("{}/sign", AGENT_URL);
+        let url = format!("{}/sign", get_agent_url());
         
         tracing::debug!("[SignatureService] Calling Agent: {} {}", method, uri);
         
@@ -120,7 +118,7 @@ impl SignatureService {
 
     /// 检查 Agent 是否可用
     pub async fn is_agent_available(&self) -> bool {
-        let url = format!("{}/health", AGENT_URL);
+        let url = format!("{}/health", get_agent_url());
         match self.client.get(&url).timeout(std::time::Duration::from_secs(2)).send().await {
             Ok(resp) => resp.status().is_success(),
             Err(_) => false,

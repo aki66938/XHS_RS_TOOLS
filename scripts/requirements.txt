@@ -1,2 +1,5 @@
-playwright
-pymongo
+fastapi
+uvicorn[standard]
+undetected-chromedriver
+xhshow
+pydantic

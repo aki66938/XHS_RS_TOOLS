@@ -14,7 +14,7 @@
 
 ## 📖 项目概述
 
-本项目是一个基于 **Rust** (后端 API) 和 **Playwright** (前端采集) 的小红书 API 逆向与自动化工具集。
+本项目是一个基于 **Rust** (后端 API) 和 **undetected-chromedriver** (前端采集) 的小红书 API 逆向与自动化工具集。
 
 ### 核心实现逻辑 (The "Secret Sauce")
 
@@ -22,11 +22,11 @@
 简单的签名生成往往无法通过校验，因为服务端会校验签名的生成环境（Cookie、Canvas 指纹等）是否与请求发起者一致。
 
 本项目采用 **Pure Algorithm** (纯算法签名) 策略：
-1.  **访客 Cookie 获取**: 使用 Playwright 无头模式访问主页，获取合法的访客 Cookie。
+1.  **访客 Cookie 获取**: 使用 Docker 容器化的 undetected-chromedriver 获取合法的访客 Cookie。
 2.  **纯 Rust 登录流程**: QR 码创建、轮询、登录确认全部由 Rust 通过官方 API 完成。
 3.  **实时签名**: Python Agent 提供 `xhshow` 算法签名服务，无需浏览器捕获。
-4.  **持久化会话**: 登录成功后 Cookie 自动存储到 MongoDB。
-5.  **架构优势**: Playwright 仅在首次获取访客 Cookie 时运行（极低频率），日常请求完全由 Rust 处理。
+4.  **持久化会话**: 登录成功后 Cookie 自动存储到本地 JSON 文件。
+5.  **架构优势**: 浏览器仅在首次获取访客 Cookie 和登录同步时运行（极低频率），日常请求完全由 Rust 处理。
 
 
 ### 🛠️ 源码启动 (Source Code Setup)
@@ -35,20 +35,28 @@
 
 **1. 基础环境准备**
 *   **Rust**: 安装最新版 Rust (及 Cargo)。
-*   **Python**: 安装 Python 3.10+。
-*   **MongoDB**: 本地安装并启动 MongoDB 服务 (默认端口 27017，用于存储 Cookie)。
+*   **Python**: 安装 Python 3.10+（仅本地运行 Agent 时需要）。
+*   **Docker** (推荐): 安装 Docker Desktop，用于容器化运行 Python Agent。
 
-**2. 依赖安装**
-Rust 依赖会自动通过 Cargo 处理。Python 依赖需手动安装：
+**2. 快速启动 (Docker 方式 - 推荐)**
 ```bash
-cd scripts
-pip install -r requirements.txt
-playwright install chromium
-cd ..
+# 启动 Python Agent 容器
+docker compose up -d --build
+
+# 启动 Rust 服务 (设置环境变量跳过本地 Agent)
+set SKIP_LOCAL_AGENT=true && cargo run
+
+# 运行测试 (新终端)
+python client_demo.py
 ```
 
-**3. 启动服务 & 测试**
+**3. 本地启动 (无 Docker)**
 ```bash
+# 安装 Python 依赖
+cd scripts
+pip install -r requirements.txt
+cd ..
+
 # 启动服务 (自动启动 Python Agent)
 cargo run
 
@@ -56,26 +64,32 @@ cargo run
 python client_demo.py
 ```
 
-## 🚀 当前功能 (v1.7.0)
+## 🚀 当前功能 (v1.9.0)
 
 以下均为目前已实现并验证的功能：
 
-*   **媒体采集**: 解析 **视频笔记** (多画质 CDN) 和 **图文笔记** (无水印/有水印)，支持服务端 **通用下载**。
-*   **纯 Rust 登录流程**: QR 码创建、状态轮询、登录确认全部 API 化，无需浏览器子进程。
-*   **全套搜索接口**: 支持搜索笔记(综合/视频/图文筛选)、搜索建议、OneBox、筛选器元数据、用户搜索。
-*   **全频道 Feed 采集**: 支持首页推荐及所有 10 个子频道（穿搭、美食、彩妆、影视、职场、情感、家居、游戏、旅行、健身）。
-*   **通知页采集**: 获取评论/@、新增关注、赞和收藏，及其分页数据。
-*   **笔记详情**: 获取指定笔记的完整内容（标题、正文、图片、标签）。
-*   **笔记评论**: 获取指定笔记的评论列表，支持分页。
-*   **实时签名**: Python Agent 提供 `xhshow` 算法实时签名。
-*   **高可靠性**: Playwright 访客 Cookie 获取支持重试机制（最多 3 次）。
+*   **🐳 Docker 容器化**: Python Agent 支持 Docker 部署，基于 `selenium/standalone-chrome` 镜像，开箱即用。
+*   **🍪 Cookie 同步优化**: 登录后智能合并 API cookies 与浏览器 cookies，彻底解决 461 风控问题。
+*   **🎬 媒体采集**: 解析 **视频笔记** (多画质 CDN) 和 **图文笔记** (无水印/有水印)，支持服务端 **通用下载**。
+*   **🔐 纯 Rust 登录流程**: QR 码创建、状态轮询、登录确认全部 API 化，无需浏览器子进程。
+*   **🔍 全套搜索接口**: 支持搜索笔记(综合/视频/图文筛选)、搜索建议、OneBox、筛选器元数据、用户搜索。
+*   **📰 全频道 Feed 采集**: 支持首页推荐及所有 10 个子频道（穿搭、美食、彩妆、影视、职场、情感、家居、游戏、旅行、健身）。
+*   **🔔 通知页采集**: 获取评论/@、新增关注、赞和收藏，及其分页数据。
+*   **📝 笔记详情**: 获取指定笔记的完整内容（标题、正文、图片、标签）。
+*   **💬 笔记评论**: 获取指定笔记的评论列表，支持分页。
+*   **✍️ 实时签名**: Python Agent 提供 `xhshow` 算法实时签名。
 
 
 ## 📅 开发日志 (Dev Log)
 
 | 版本 | 日期 | 更新内容 | 
 | :--- | :--- | :--- | 
-| **v1.8.0** | 2026-01-22 | **存储轻量化 & 搜索风控突破** | 
+| **v1.9.0** | 2026-01-23 | **Docker 容器化 & Cookie 同步优化** | 
+| | | - 🐳 **Agent 容器化**: 基于 `selenium/standalone-chrome:4.16.1` 镜像，使用 `undetected-chromedriver` + Xvfb 实现容器内 headed 模式 | 
+| | | - 🍪 **Cookie 深度优化**: 登录后智能合并 API cookies (含 `id_token`) 与浏览器 cookies (含 `a1`, `webId`)，彻底解决 461 问题 | 
+| | | - 🔑 **search_id 格式修正**: 统一使用 `2fvzx` 前缀 + 16位随机字符的真实格式 | 
+| | | - 📦 **代理配置**: 支持通过 `HTTP_PROXY`/`HTTPS_PROXY` 环境变量配置容器网络代理 | 
+| **v1.8.0** | 2026-01-22 | **存储轻量化 & 搜索风控突破** |
 | | | - 💾 **去数据库化**: 彻底移除 MongoDB 依赖，改用本地 JSON 文件存储 Cookie，实现开箱即用 | 
 | | | - 🔓 **461 修复**: 引入浏览器 Cookie 同步机制，解决 Search/OneBox 接口风控问题 | 
 | **v1.7.0** | 2026-01-21 | **媒体采集功能 (视频+图片)** | 

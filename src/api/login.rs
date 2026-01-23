@@ -14,6 +14,7 @@ use anyhow::{anyhow, Result};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, ORIGIN, REFERER, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::config::get_agent_url;
 
 // ============================================================================
 // Constants
@@ -23,7 +24,6 @@ const XHS_ORIGIN: &str = "https://www.xiaohongshu.com";
 const XHS_REFERER: &str = "https://www.xiaohongshu.com/";
 const XHS_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
 
-const AGENT_URL: &str = "http://127.0.0.1:8765";
 const QRCODE_CREATE_URL: &str = "https://edith.xiaohongshu.com/api/sns/web/v1/login/qrcode/create";
 const QRCODE_STATUS_URL: &str = "https://edith.xiaohongshu.com/api/sns/web/v1/login/qrcode/status";
 
@@ -143,7 +143,7 @@ pub struct PollStatusResponse {
 /// Returns a HashMap of cookies needed for QR code login
 pub async fn fetch_guest_cookies() -> Result<HashMap<String, String>> {
     let client = reqwest::Client::new();
-    let url = format!("{}/guest-cookies", AGENT_URL);
+    let url = format!("{}/guest-cookies", get_agent_url());
     
     tracing::info!("Fetching guest cookies from Agent...");
     
@@ -174,7 +174,7 @@ async fn sign_request(
     payload: Option<serde_json::Value>,
 ) -> Result<(String, String, String, String)> {
     let client = reqwest::Client::new();
-    let url = format!("{}/sign", AGENT_URL);
+    let url = format!("{}/sign", get_agent_url());
     
     let request = AgentSignRequest {
         method: method.to_string(),
@@ -330,9 +330,16 @@ pub async fn check_qrcode_status(
             if let Some(session) = web_session {
                 match sync_login_cookies(&session).await {
                     Ok(synced_cookies) => {
-                        tracing::info!("Cookie synchronization successful! Got {} cookies.", synced_cookies.len());
-                        // 使用同步回来的完整 cookies 覆盖 set-cookie 中的非完整 cookies
-                        Some(synced_cookies)
+                        tracing::info!("Cookie synchronization successful! Got {} cookies from browser.", synced_cookies.len());
+                        
+                        // MERGE: Start with login API cookies (contains id_token from Set-Cookie headers)
+                        // Then OVERRIDE with browser-synced cookies (fresh a1, webId, etc.)
+                        // This preserves id_token while getting fresh browser-generated cookies
+                        let mut merged = new_cookies.clone();
+                        merged.extend(synced_cookies);
+                        
+                        tracing::info!("Merged cookies: {} total (API cookies + browser cookies)", merged.len());
+                        Some(merged)
                     }
                     Err(e) => {
                         tracing::warn!("Cookie synchronization failed: {}. Falling back to basic cookies.", e);
@@ -356,7 +363,7 @@ pub async fn check_qrcode_status(
 /// Sync full login cookies from Python Agent (Headless Browser)
 pub async fn sync_login_cookies(web_session: &str) -> Result<HashMap<String, String>> {
     let client = reqwest::Client::new();
-    let url = format!("{}/sync-login-cookies", AGENT_URL);
+    let url = format!("{}/sync-login-cookies", get_agent_url());
     
     let mut payload = HashMap::new();
     payload.insert("web_session", web_session);

@@ -1,17 +1,25 @@
 version: '3.8'
 
 services:
-  mongodb:
-    image: mongo:7
-    container_name: xhs-mongodb
+  # Python Agent: 签名服务 + Playwright 浏览器操作
+  xhs-agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+      args:
+        HTTP_PROXY: ${HTTP_PROXY}
+        HTTPS_PROXY: ${HTTPS_PROXY}
+    container_name: xhs-agent
     ports:
-      - "27017:27017"
-    volumes:
-      - xhs_mongo_data:/data/db
-    environment:
-      MONGO_INITDB_DATABASE: xhs_tools
+      - "8765:8765"
+    shm_size: 2gb
     restart: unless-stopped
-
-volumes:
-  xhs_mongo_data:
-    driver: local
+    environment:
+      - HTTP_PROXY=${HTTP_PROXY}
+      - HTTPS_PROXY=${HTTPS_PROXY}
+      - NO_PROXY=localhost,127.0.0.1,::1
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8765/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3

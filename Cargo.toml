@@ -31,5 +31,6 @@ once_cell = "1"  # For lazy static agent manager
 qrcode = "0.14"  # For terminal ASCII QR code display
 urlencoding = "2.1.3"
 uuid = { version = "1", features = ["v4"] }
+dotenv = "0.15"
 time = { version = "0.3.45", features = ["macros", "local-offset"] }
 

@@ -26,35 +26,31 @@ pub async fn recommend_search(api: &XhsApiClient, keyword: &str) -> Result<Searc
     Ok(result)
 }
 
-/// 生成 Search ID (格式: xxx@xxx)
+/// 生成 Search ID (格式: 2fvzx + 16位随机字符, 共21位)
 /// 
-/// 用于 search/notes 接口，search_id 由两部分组成，用 @ 连接
+/// 用于所有搜索接口，统一使用简单格式
 pub fn generate_search_id() -> String {
-    let part1: String = rand::thread_rng()
+    let suffix: String = rand::thread_rng()
         .sample_iter(&Alphanumeric)
-        .take(22)
+        .take(16)
         .map(char::from)
         .collect::<String>()
         .to_lowercase();
-    let part2: String = rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(22)
-        .map(char::from)
-        .collect::<String>()
-        .to_lowercase();
-    format!("{}@{}", part1, part2)
+    format!("2fvzx{}", suffix)
 }
 
-/// 生成简单 Search ID (格式: xxx, 21位)
+/// 生成简单 Search ID (格式: 2fvzx + 16位随机字符, 共21位)
 /// 
-/// 用于 search/notes, search/onebox 和 search/usersearch 接口
+/// 用于 search/recommend, search/onebox 和 search/filter 接口
+/// 根据用户观察，真实 search_id 格式为: 2fvzx 前缀 + 16位随机小写字母和数字
 fn generate_simple_search_id() -> String {
-    rand::thread_rng()
+    let suffix: String = rand::thread_rng()
         .sample_iter(&Alphanumeric)
-        .take(21)
+        .take(16)
         .map(char::from)
         .collect::<String>()
-        .to_lowercase()
+        .to_lowercase();
+    format!("2fvzx{}", suffix)
 }
 
 /// 生成 Request ID (10位随机数-时间戳)

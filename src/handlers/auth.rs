@@ -209,11 +209,14 @@ pub async fn poll_qrcode_status_handler(
             
             let login_info = resp.data.as_ref().and_then(|d| d.login_info.clone());
             
-            // If login success, merge new cookies with guest cookies and save
+            // If login success, use FULL synced cookies (NOT merged with guest cookies)
+            // This prevents 461 errors caused by mixing guest and user cookies
             if code_status == 2 {
                 if let Some(ref new_c) = new_cookies {
-                    let mut merged = cookies.clone();
-                    merged.extend(new_c.clone());
+                    // FULL REPLACEMENT: Use only the synced cookies, do NOT merge with guest cookies
+                    let final_cookies = new_c.clone();
+                    
+                    tracing::info!("Using FULL synced cookies ({} total), NOT merging with guest cookies.", final_cookies.len());
                     
                     // Extract user_id from login_info or use a default
                     let user_id = login_info
@@ -221,10 +224,10 @@ pub async fn poll_qrcode_status_handler(
                         .and_then(|info| info.user_id.clone())
                         .unwrap_or_else(|| "unknown".to_string());
                     
-                    // Create and save credentials
+                    // Create and save credentials with ONLY the synced cookies
                     let creds = crate::auth::credentials::UserCredentials::new(
                         user_id.clone(),
-                        merged,
+                        final_cookies,
                         None, // No x_s_common in pure algo mode
                     );
                     

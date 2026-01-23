@@ -21,6 +21,8 @@ debug_qr.png
 doc/api_reference.md
 doc/reverse_engineering_research.md
 doc/feature_todo_*.md
+# Future feature planning (internal only)
+doc/feature_fingerprint_browser.md
 
 # Credentials & Cookies
 cookie.json

@@ -1,0 +1,58 @@
+# XHS Python Agent Container (Selenium Base Edition)
+# 
+# Using selenium/standalone-chrome as base to provide Chrome + Xvfb out of the box.
+# This allows running in "headed" mode (hidden behind Xvfb) to bypass anti-bot checks.
+# 
+# Usage:
+#   docker build -t xhs-agent -f docker/Dockerfile.agent .
+#   # With Proxy (passed to docker build):
+#   docker build --build-arg HTTP_PROXY=... -t xhs-agent -f docker/Dockerfile.agent .
+
+FROM selenium/standalone-chrome:4.16.1
+
+# Switch to root to install python
+USER root
+
+# Install Python and pip
+# We need python3-venv for venv creation if chosen, or just standard pip
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Handle Proxy for pip if build args are passed
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY=localhost,127.0.0.1,::1
+ENV HTTP_PROXY=${HTTP_PROXY}
+ENV HTTPS_PROXY=${HTTPS_PROXY}
+ENV NO_PROXY=${NO_PROXY}
+# Also export lowercase for Linux tools strict compliance
+ENV http_proxy=${HTTP_PROXY}
+ENV https_proxy=${HTTPS_PROXY}
+ENV no_proxy=${NO_PROXY}
+
+COPY scripts/requirements.txt .
+
+# Install dependencies
+# Note: On recent Ubuntu/Debian, pip requires --break-system-packages or venv.
+# Since this is a dedicated container, breaking system packages is acceptable/simplest.
+# We explicitly install setuptools because undetected-chromedriver needs distutils
+# Note: selenium/standalone-chrome:4.16.1 uses older pip/python where --break-system-packages is not supported/needed.
+RUN pip3 install --no-cache-dir setuptools && \
+    pip3 install --no-cache-dir -r requirements.txt
+
+# Copy Agent Code
+COPY scripts/agent_server.py .
+COPY scripts/xhs_playwright/ ./xhs_playwright/
+
+# Expose port
+EXPOSE 8765
+
+# Start the server using xvfb-run to ensure a virtual display is available
+# We use --auto-servernum to avoid conflicts with existing locks, though likely none exists.
+# We also ensure the screen size matches our Chrome window-size argument.
+CMD ["sh", "-c", "xvfb-run --server-args='-screen 0 1920x1080x24' python3 agent_server.py"]

@@ -51,18 +51,28 @@ def test_search_recommend():
 import random
 import string
 
-def generate_random_id(length=22):
-    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
+# 统一的测试关键词，用于所有相关搜索测试
+TEST_KEYWORD = "鬼灭之刃"
+
+def generate_simple_search_id():
+    """生成简单 search_id (格式: 2fvzx + 16位随机字符)"""
+    suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=16))
+    return f"2fvzx{suffix}"
+
+def generate_search_id():
+    """生成 search_id (格式: 2fvzx + 16位随机字符, 共21位)"""
+    suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=16))
+    return f"2fvzx{suffix}"
 
 def test_search_notes() -> str:
-    """测试搜索笔记 API，使用随机生成的 search_id"""
+    """测试搜索笔记 API，使用 2fvzx 格式的 search_id"""
     print("\n[API] POST /api/search/notes (搜索笔记)")
     
-    # 随机生成 search_id (模拟真实请求: xxx@xxx)
-    test_search_id = f"{generate_random_id()}@{generate_random_id()}"
-    test_keyword = "鬼灭之刃"
+    # 使用统一格式的 search_id
+    test_search_id = generate_search_id()
+    test_keyword = TEST_KEYWORD
     
-    print(f"    Testing with Random Search ID: {test_search_id}")
+    print(f"    Testing with Search ID: {test_search_id}")
     
     try:
         payload = {
@@ -171,7 +181,7 @@ def test_search_filter(search_id: str):
         return
     print("\n[API] GET /api/search/filter")
     try:
-        keyword = urllib.parse.quote("鬼灭之刃")
+        keyword = urllib.parse.quote(TEST_KEYWORD)
         sid = urllib.parse.quote(search_id)
         url = f"{BASE_URL}/api/search/filter?keyword={keyword}&search_id={sid}"
         with urllib.request.urlopen(url, timeout=10) as response:

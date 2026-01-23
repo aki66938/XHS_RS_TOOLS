@@ -23,7 +23,16 @@ impl AgentManager {
     }
 
     /// 启动 Python Agent Server
+    /// 
+    /// 在容器模式下（检测到 XHS_AGENT_URL 环境变量），跳过子进程启动
     pub fn start(&self) -> anyhow::Result<()> {
+        // 容器模式：跳过子进程管理
+        if crate::config::is_container_mode() {
+            info!("[AgentManager] Container mode detected (XHS_AGENT_URL set), skipping subprocess management");
+            info!("[AgentManager] Agent URL: {}", crate::config::get_agent_url());
+            return Ok(());
+        }
+        
         let script_path = self.get_agent_script_path()?;
         
         info!("[AgentManager] Starting Python Agent: {:?}", script_path);
