@@ -266,6 +266,17 @@ def test_creator_login():
                 elif status == 1: # Success (Login Confirmed)
                     print("\n")
                     print(f"    ✅ 登录成功! (Status: {status})")
+                    
+                    # Check for synced cookies
+                    new_cookies = poll_data.get("new_cookies", {})
+                    if new_cookies:
+                        print(f"    🍪 获取新 Cookie: {len(new_cookies)} 个 (已同步 User Session)")
+                        # Optional: Print some key cookies to verify
+                        if 'a1' in new_cookies:
+                             print(f"       => Found 'a1': {new_cookies['a1'][:8]}...")
+                    else:
+                        print("    ⚠️  未发现新 Cookie，同步可能未成或未返回")
+                        
                     print(f"    完整响应: {json.dumps(poll_data, indent=2, ensure_ascii=False)}")
                     return
                 elif status is not None:

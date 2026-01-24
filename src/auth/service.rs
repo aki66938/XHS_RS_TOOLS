@@ -8,6 +8,8 @@ use tracing::{info, warn};
 use crate::auth::{CredentialStorage, UserCredentials};
 use crate::auth::browser::trigger_python_login;
 
+use std::path::PathBuf;
+
 /// Global authentication state
 pub struct AuthService {
     storage: CredentialStorage,
@@ -16,14 +18,14 @@ pub struct AuthService {
 
 impl AuthService {
     /// Create a new authentication service (uses JSON file storage)
-    pub async fn new() -> Result<Self> {
-        let storage = CredentialStorage::new().await?;
+    pub async fn new(storage_path: PathBuf) -> Result<Self> {
+        let storage = CredentialStorage::new(storage_path).await?;
         
         // Try to load existing credentials
         let cached = storage.get_active_credentials().await?;
         
         if cached.is_some() {
-            info!("Loaded existing credentials from cookie.json");
+            info!("Loaded existing credentials from storage");
         }
         
         Ok(Self {

@@ -329,7 +329,10 @@ pub async fn check_qrcode_status(
                 .cloned();
                 
             if let Some(session) = web_session {
-                match sync_login_cookies(&session).await {
+                let mut cookies_to_sync = HashMap::new();
+                cookies_to_sync.insert("web_session".to_string(), session);
+                
+                match sync_login_cookies(&cookies_to_sync, None).await {
                     Ok(synced_cookies) => {
                         tracing::info!("Cookie synchronization successful! Got {} cookies from browser.", synced_cookies.len());
                         
@@ -362,14 +365,20 @@ pub async fn check_qrcode_status(
 }
 
 /// Sync full login cookies from Python Agent (Headless Browser)
-pub async fn sync_login_cookies(web_session: &str) -> Result<HashMap<String, String>> {
+/// 
+/// - `web_session`: The base session cookie
+/// - `target`: Optional target page ("explore" [default], "creator")
+pub async fn sync_login_cookies(cookies: &HashMap<String, String>, target: Option<&str>) -> Result<HashMap<String, String>> {
     let client = reqwest::Client::new();
     let url = format!("{}/sync-login-cookies", get_agent_url());
     
-    let mut payload = HashMap::new();
-    payload.insert("web_session", web_session);
+    let mut payload = serde_json::Map::new();
+    payload.insert("cookies".to_string(), serde_json::to_value(cookies)?);
+    if let Some(t) = target {
+        payload.insert("target".to_string(), serde_json::Value::String(t.to_string()));
+    }
     
-    tracing::info!("Syncing cookies for session: {}...", &web_session[..6]);
+    tracing::info!("Syncing cookies... Target: {:?}", target);
     
     // 设置较长的超时时间，因为包含浏览器启动和访问过程
     let response = client

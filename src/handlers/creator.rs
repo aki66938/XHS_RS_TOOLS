@@ -2,7 +2,9 @@
 //!
 //! Exposes REST endpoints for Creator Center login flow.
 
-use axum::{Json, response::IntoResponse};
+use axum::{Json, response::IntoResponse, extract::State};
+use std::sync::Arc;
+use crate::server::AppState;
 use crate::api::creator::{auth, models::{CreatorQrcodeCreateRequest, CreatorQrcodeStatusRequest}};
 use crate::api::login::{GuestInitResponse, CreateQrCodeResponse};
 
@@ -89,10 +91,37 @@ pub async fn creator_create_qrcode_handler(
     )
 )]
 pub async fn creator_check_qrcode_status(
+    State(state): State<Arc<AppState>>,
     Json(payload): Json<CreatorQrcodeStatusRequest>
 ) -> impl IntoResponse {
     match auth::check_creator_qrcode_status(&payload.qr_id, &payload.cookies).await {
-        Ok(json) => Json(json),
+        Ok((mut json, new_cookies)) => {
+            if let Some(nc) = new_cookies {
+                // Save credentials to cookie-creator.json
+                let user_id = json.get("data")
+                    .and_then(|d| d.get("user_id"))
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                    
+                let creds = crate::auth::credentials::UserCredentials::new(
+                    user_id.clone(),
+                    nc.clone(),
+                    None, 
+                );
+                
+                if let Err(e) = state.creator_auth.save_credentials(&creds).await {
+                    tracing::error!("Failed to save Creator credentials: {}", e);
+                } else {
+                    tracing::info!("Saved Creator credentials for user: {}", user_id);
+                }
+
+                if let Some(obj) = json.as_object_mut() {
+                    obj.insert("new_cookies".to_string(), serde_json::to_value(nc).unwrap_or_default());
+                }
+            }
+            Json(json)
+        },
         Err(e) => Json(serde_json::json!({
             "success": false,
             "error": e.to_string()

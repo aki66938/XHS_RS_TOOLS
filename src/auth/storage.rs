@@ -8,7 +8,7 @@ use tracing::{info, warn};
 
 use super::credentials::UserCredentials;
 
-const COOKIE_FILE: &str = "cookie.json";
+
 
 /// JSON file-based credential storage
 pub struct CredentialStorage {
@@ -17,8 +17,7 @@ pub struct CredentialStorage {
 
 impl CredentialStorage {
     /// Create a new storage instance
-    pub async fn new() -> Result<Self> {
-        let file_path = PathBuf::from(COOKIE_FILE);
+    pub async fn new(file_path: PathBuf) -> Result<Self> {
         info!("Using JSON credential storage: {}", file_path.display());
         Ok(Self { file_path })
     }

@@ -31,7 +31,7 @@ use crate::{
     handlers::auth as auth_handlers,
     handlers::notification as notification_handlers,
     handlers::user as user_handlers,
-    handlers::feed as feed_handlers,
+
     handlers::media as media_handlers,
     handlers::creator as creator_handlers,
     api,

@@ -225,19 +225,31 @@ async def get_guest_cookies(target: str = "explore"):
 
 
 class SyncCookiesRequest(BaseModel):
-    web_session: str
+    web_session: Optional[str] = None
+    cookies: Optional[Dict[str, str]] = None
+    target: str = "explore"
 
 
 @app.post("/sync-login-cookies", response_model=GuestCookiesResponse)
 async def sync_login_cookies(request: SyncCookiesRequest):
     """Sync login cookies using UC"""
     web_session = request.web_session
-    if not web_session:
-        return GuestCookiesResponse(success=False, error="Missing web_session")
+    input_cookies = request.cookies
+    target = request.target
+    
+    # Merge input cookies
+    cookies_to_inject = {}
+    if web_session:
+        cookies_to_inject["web_session"] = web_session
+    if input_cookies:
+        cookies_to_inject.update(input_cookies)
+        
+    if not cookies_to_inject:
+        return GuestCookiesResponse(success=False, error="Missing cookies (web_session or cookies dict)")
         
     driver = None
     try:
-        logger.info(f"[Cookie Sync] Starting sync for {web_session[:6]}...")
+        logger.info(f"[Cookie Sync] Starting sync... Target: {target}, Injecting {len(cookies_to_inject)} cookies")
         options = get_chrome_options()
         
         # Use same driver path logic as get_guest_cookies
@@ -253,17 +265,23 @@ async def sync_login_cookies(request: SyncCookiesRequest):
         driver.get("https://www.xiaohongshu.com/404")
         time.sleep(2)
         
-        # Add cookie
-        driver.add_cookie({
-            "name": "web_session",
-            "value": web_session,
-            "domain": ".xiaohongshu.com",
-            "path": "/"
-        })
+        # Add cookies
+        for name, value in cookies_to_inject.items():
+            driver.add_cookie({
+                "name": name,
+                "value": value,
+                "domain": ".xiaohongshu.com",
+                "path": "/"
+            })
         
-        # Go to home to trigger full cookie generation
-        logger.info("[Cookie Sync] Navigating to XHS home...")
-        driver.get("https://www.xiaohongshu.com/")
+        # Determine target URL
+        target_url = "https://www.xiaohongshu.com/"
+        if target == "creator":
+            target_url = "https://creator.xiaohongshu.com/creator/home"
+            
+        # Go to target to trigger full cookie generation
+        logger.info(f"[Cookie Sync] Navigating to {target_url}...")
+        driver.get(target_url)
         time.sleep(5)
         
         selenium_cookies = driver.get_cookies()
@@ -271,12 +289,7 @@ async def sync_login_cookies(request: SyncCookiesRequest):
         
         logger.info(f"[Cookie Sync] Got {len(cookies_dict)} cookies")
         
-        # Verify critical cookies
-        required = ['a1', 'webId', 'web_session']
-        missing = [k for k in required if k not in cookies_dict]
-        if missing:
-            logger.warning(f"[Cookie Sync] Missing: {missing}")
-        
+        # Verify critical cookies (check loosely as requirements differ by target)
         return GuestCookiesResponse(success=True, cookies=cookies_dict)
         
     except Exception as e:

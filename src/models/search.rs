@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-use serde_json::json;
+
 use super::feed::HomefeedItem;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

@@ -5,7 +5,7 @@
 
 use anyhow::{anyhow, Result};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, ORIGIN, REFERER, USER_AGENT};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashMap;
 use crate::config::get_agent_url;
 use crate::api::login::{
@@ -192,11 +192,11 @@ pub async fn create_creator_qrcode(cookies: &HashMap<String, String>) -> Result<
 /// Check Creator QR Code Status
 ///
 /// Polls the status of the QR code.
-/// Status codes: 2 (Waiting), 3 (Scanned), others (Success?)
+/// Status codes: 2 (Waiting), 3 (Scanned), 1 (Success)
 pub async fn check_creator_qrcode_status(
     qr_id: &str,
     cookies: &HashMap<String, String>
-) -> Result<serde_json::Value> {
+) -> Result<(serde_json::Value, Option<HashMap<String, String>>)> {
     let uri = "/api/cas/customer/web/qr-code";
     
     let service = "https://creator.xiaohongshu.com";
@@ -227,6 +227,22 @@ pub async fn check_creator_qrcode_status(
         .send()
         .await?;
         
+    // Extract new cookies from Set-Cookie headers
+    let mut new_cookies: HashMap<String, String> = HashMap::new();
+    for (name, value) in response.headers().iter() {
+        if name.as_str() == "set-cookie" {
+            if let Ok(v) = value.to_str() {
+                // Parse "name=value; ..." format
+                if let Some(main) = v.split(';').next() {
+                    let mut parts = main.splitn(2, '=');
+                    if let (Some(k), Some(val)) = (parts.next(), parts.next()) {
+                        new_cookies.insert(k.trim().to_string(), val.trim().to_string());
+                    }
+                }
+            }
+        }
+    }
+    
     let status = response.status();
     let text = response.text().await?;
     
@@ -236,6 +252,59 @@ pub async fn check_creator_qrcode_status(
     
     let json: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| anyhow!("Parse error: {} - Body: {}", e, text))?;
+
+    // Check data.status
+    // 1: Success
+    // 2: Waiting
+    // 3: Scanned
+    let code_status = json.get("data")
+        .and_then(|d| d.get("status"))  // Creator API uses "status" inside data, not "code_status"
+        .and_then(|s| s.as_i64())
+        .map(|s| s as i32);
         
-    Ok(json)
+    let cookies_to_return = if code_status == Some(1) {
+        tracing::info!("Creator Login confirmed! Starting blocking cookie synchronization...");
+        
+        // Collect identifying cookies for the Creator session
+        let mut tokens_to_sync = HashMap::new();
+        
+        if let Some(sid) = new_cookies.get("customer-sso-sid").or_else(|| cookies.get("customer-sso-sid")) {
+            tokens_to_sync.insert("customer-sso-sid".to_string(), sid.clone());
+        }
+        if let Some(token) = new_cookies.get("access-token-creator.xiaohongshu.com").or_else(|| cookies.get("access-token-creator.xiaohongshu.com")) {
+            tokens_to_sync.insert("access-token-creator.xiaohongshu.com".to_string(), token.clone());
+        }
+        // Also try specific session ID if available
+        if let Some(sess) = new_cookies.get("galaxy.creator.beaker.session.id").or_else(|| cookies.get("galaxy.creator.beaker.session.id")) {
+             tokens_to_sync.insert("galaxy.creator.beaker.session.id".to_string(), sess.clone());
+        }
+        if let Some(web) = new_cookies.get("web_session").or_else(|| cookies.get("web_session")) {
+            tokens_to_sync.insert("web_session".to_string(), web.clone());
+        }
+
+        if !tokens_to_sync.is_empty() {
+            // Call sync with target="creator" and all collected tokens
+            match crate::api::login::sync_login_cookies(&tokens_to_sync, Some("creator")).await {
+                Ok(synced_cookies) => {
+                    tracing::info!("Creator Cookie synchronization successful! Got {} cookies.", synced_cookies.len());
+                    
+                    let mut merged = new_cookies.clone();
+                    merged.extend(synced_cookies);
+                    
+                    Some(merged)
+                }
+                Err(e) => {
+                    tracing::warn!("Creator Cookie synchronization failed: {}. Falling back.", e);
+                    if new_cookies.is_empty() { None } else { Some(new_cookies) }
+                }
+            }
+        } else {
+            tracing::warn!("Creator Login success but no valid session tokens found for sync. Skipping.");
+            if new_cookies.is_empty() { None } else { Some(new_cookies) }
+        }
+    } else {
+        if new_cookies.is_empty() { None } else { Some(new_cookies) }
+    };
+        
+    Ok((json, cookies_to_return))
 }

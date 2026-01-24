@@ -7,6 +7,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use utoipa::OpenApi;
@@ -27,6 +28,7 @@ use crate::{
 pub struct AppState {
     pub api: XhsApiClient,
     pub auth: Arc<AuthService>,
+    pub creator_auth: Arc<AuthService>,
     /// Guest cookies for QR login (populated by guest-init)
     pub guest_cookies: Arc<RwLock<Option<std::collections::HashMap<String, String>>>>,
     /// Current QR code info (qr_id, code)
@@ -40,7 +42,10 @@ pub struct AppState {
 pub async fn start_server() -> anyhow::Result<()> {
     // Initialize AuthService (uses JSON file storage)
     tracing::info!("Initializing AuthService with JSON file storage...");
-    let auth = Arc::new(AuthService::new().await?);
+    let auth = Arc::new(AuthService::new(PathBuf::from("cookie.json")).await?);
+    
+    tracing::info!("Initializing CreatorAuthService with cookie-creator.json...");
+    let creator_auth = Arc::new(AuthService::new(PathBuf::from("cookie-creator.json")).await?);
     
     let client = XhsClient::new()?;
     let api = XhsApiClient::new(client, auth.clone());
@@ -49,7 +54,7 @@ pub async fn start_server() -> anyhow::Result<()> {
     let guest_cookies = Arc::new(RwLock::new(None));
     let qrcode_info = Arc::new(RwLock::new(None));
     
-    let state = Arc::new(AppState { api, auth, guest_cookies, qrcode_info });
+    let state = Arc::new(AppState { api, auth, creator_auth, guest_cookies, qrcode_info });
 
     let app = Router::new()
         // Swagger UI
