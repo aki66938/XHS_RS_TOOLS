@@ -4,28 +4,24 @@
 //! Similar to the user login flow but operating in the 'ugc' context.
 
 use anyhow::{anyhow, Result};
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, ORIGIN, REFERER, USER_AGENT};
+use reqwest::header::{HeaderValue, CONTENT_TYPE};
 use serde::Deserialize;
 use std::collections::HashMap;
 use crate::config::get_agent_url;
 use crate::api::login::{
     QrCodeCreateResponse,
-    AgentGuestCookiesResponse,
-    AgentSignRequest,
-    AgentSignResponse,
     QrCodeCreateData,
+    AgentGuestCookiesResponse,
 };
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const CREATOR_ORIGIN: &str = "https://creator.xiaohongshu.com";
-const CREATOR_REFERER: &str = "https://creator.xiaohongshu.com/";
-const XHS_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
-
 // Creator QR Code API is actually the same endpoint on customer.xiaohongshu.com
 const QRCODE_CREATE_URL: &str = "https://customer.xiaohongshu.com/api/cas/customer/web/qr-code";
+
+use crate::api::creator::utils::{sign_request, build_creator_headers, cookies_to_string};
 
 // ============================================================================
 // Core Functions
@@ -58,67 +54,6 @@ pub async fn fetch_creator_guest_cookies() -> Result<HashMap<String, String>> {
     }
     
     result.cookies.ok_or_else(|| anyhow!("No cookies returned"))
-}
-
-/// Sign request using Agent (same logic as user, but different endpoint/context)
-async fn sign_request(
-    cookies: &HashMap<String, String>,
-    method: &str,
-    uri: &str,
-    payload: Option<serde_json::Value>,
-) -> Result<(String, String, String)> {
-    let client = reqwest::Client::new();
-    let url = format!("{}/sign", get_agent_url());
-    
-    let request = AgentSignRequest {
-        method: method.to_string(),
-        uri: uri.to_string(),
-        cookies: cookies.clone(),
-        payload,
-    };
-    
-    let response = client
-        .post(&url)
-        .json(&request)
-        .timeout(std::time::Duration::from_secs(5))
-        .send()
-        .await
-        .map_err(|e| anyhow!("Failed to connect to Agent: {}", e))?;
-    
-    let result: AgentSignResponse = response
-        .json()
-        .await
-        .map_err(|e| anyhow!("Failed to parse signature response: {}", e))?;
-    
-    if !result.success {
-        return Err(anyhow!("Sign error: {}", result.error.unwrap_or_default()));
-    }
-    
-    Ok((
-        result.x_s.unwrap_or_default(),
-        result.x_t.unwrap_or_default(),
-        result.x_s_common.unwrap_or_default(),
-    ))
-}
-
-/// Build common headers for Creator API
-fn build_creator_headers() -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.insert(ACCEPT, HeaderValue::from_static("application/json, text/plain, */*"));
-    headers.insert(ORIGIN, HeaderValue::from_static(CREATOR_ORIGIN));
-    headers.insert(REFERER, HeaderValue::from_static(CREATOR_REFERER));
-    headers.insert(USER_AGENT, HeaderValue::from_static(XHS_USER_AGENT));
-    // CRITICAL: Creator Center / UGC context
-    headers.insert("xsecappid", HeaderValue::from_static("ugc"));
-    headers
-}
-
-fn cookies_to_string(cookies: &HashMap<String, String>) -> String {
-    cookies
-        .iter()
-        .map(|(k, v)| format!("{}={}", k, v))
-        .collect::<Vec<_>>()
-        .join("; ")
 }
 
 /// Create QR code for Creator Center Login

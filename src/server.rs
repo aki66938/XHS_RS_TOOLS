@@ -99,6 +99,10 @@ pub async fn start_server() -> anyhow::Result<()> {
         .route("/api/creator/auth/qrcode/create", post(handlers::creator_create_qrcode_handler))
         .route("/api/creator/auth/qrcode/status", post(handlers::creator_check_qrcode_status))
         
+        // Creator Info routes
+        .route("/api/galaxy/user/info", get(handlers::creator_user_info_handler))
+        .route("/api/galaxy/creator/home/personal_info", get(handlers::creator_home_info_handler))
+        
         // Middleware
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state);

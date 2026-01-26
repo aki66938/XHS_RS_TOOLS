@@ -36,7 +36,7 @@ use crate::{
     handlers::creator as creator_handlers,
     api,
     api::creator::{
-        models::{CreatorQrcodeCreateRequest, CreatorQrcodeStatusRequest}
+        models::{CreatorQrcodeCreateRequest, CreatorQrcodeStatusRequest, CreatorUserInfo, CreatorHomeInfo, CreatorGrowInfo}
     }
 };
 
@@ -64,6 +64,8 @@ use crate::{
         creator_handlers::creator_guest_init_handler,
         creator_handlers::creator_create_qrcode_handler,
         creator_handlers::creator_check_qrcode_status,
+        creator_handlers::creator_user_info_handler,
+        creator_handlers::creator_home_info_handler,
     ),
     components(
         schemas(
@@ -83,7 +85,8 @@ use crate::{
             VideoRequest, VideoResponse, VideoData, VideoItem,
             ImagesRequest, ImagesResponse, ImagesData, ImageItem,
             DownloadRequest, DownloadResponse, DownloadData,
-            CreatorQrcodeCreateRequest, CreatorQrcodeStatusRequest
+            CreatorQrcodeCreateRequest, CreatorQrcodeStatusRequest,
+            CreatorUserInfo, CreatorHomeInfo, CreatorGrowInfo
         )
     ),
     tags(

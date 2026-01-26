@@ -218,7 +218,8 @@ def test_creator_login():
             else:
                 print(f"    扫码链接: {qr_url}")
                 
-            print("\n⚠️  注意: 请立刻手动扫码，并在浏览器 F12 中捕获轮询请求 (status)！")
+                
+            # print("\n⚠️  注意: 请立刻手动扫码，并在浏览器 F12 中捕获轮询请求 (status)！")
             
         else:
             print(f"    ❌ 失败: {data.get('error')}")
@@ -298,6 +299,51 @@ def test_creator_login():
     print("\n    ❌ 登录超时")
 
 
+
+def test_creator_apis():
+    """测试创作者中心 API (User Info, Home Info)"""
+    print("\n" + "=" * 50)
+    print("  测试创作者中心 API (Creator Center APIs)")
+    print("=" * 50)
+    
+    # 1. User Info
+    print("\n[1/2] 获取用户信息 (/api/galaxy/user/info)...")
+    try:
+        req = urllib.request.Request(f"{BASE_URL}/api/galaxy/user/info")
+        with urllib.request.urlopen(req, timeout=30) as response:
+            data = json.loads(response.read().decode('utf-8'))
+        
+        if data.get("success"):
+            info = data.get("data", {})
+            print(f"    ✅ 成功")
+            print(f"    User Name: {info.get('userName')}")
+            print(f"    User ID: {info.get('userId')}")
+            print(f"    Role: {info.get('role')}")
+            print(f"    Permissions: {len(info.get('permissions', []))} items")
+        else:
+            print(f"    ❌ 失败: {data.get('error')}")
+    except Exception as e:
+        print(f"    ❌ 请求错误: {e}")
+
+    # 2. Home Info
+    print("\n[2/2] 获取主页信息 (/api/galaxy/creator/home/personal_info)...")
+    try:
+        req = urllib.request.Request(f"{BASE_URL}/api/galaxy/creator/home/personal_info")
+        with urllib.request.urlopen(req, timeout=30) as response:
+            data = json.loads(response.read().decode('utf-8'))
+        
+        if data.get("success"):
+            info = data.get("data", {})
+            print(f"    ✅ 成功")
+            print(f"    Name: {info.get('name')}")
+            print(f"    Fans: {info.get('fans_count')}")
+            print(f"    Likes: {info.get('faved_count')}")
+            print(f"    Desc: {info.get('personal_desc')}")
+        else:
+            print(f"    ❌ 失败: {data.get('error')}")
+    except Exception as e:
+        print(f"    ❌ 请求错误: {e}")
+
 # ============================================================================
 # Main Helper
 # ============================================================================
@@ -355,12 +401,13 @@ def interactive_menu():
         print("  功能菜单:")
         print("  1. 用户登录 (User Login Flow)")
         print("  2. 创作者登录 (Creator Login Flow)")
-        print("  3. 测试所有用户接口 (Test All User APIs)")
-        print("  4. 测试单个接口...")
+        print("  3. 测试创作者接口 (Test Creator APIs)")
+        print("  4. 测试所有用户接口 (Test All User APIs)")
+        print("  5. 测试单个接口...")
         print("  0. 退出 (Exit)")
         print("-" * 30)
         
-        choice = input("请选择 (0-4): ").strip()
+        choice = input("请选择 (0-5): ").strip()
         
         if choice == '0':
             print("再见!")
@@ -370,9 +417,11 @@ def interactive_menu():
         elif choice == '2':
             test_creator_login()
         elif choice == '3':
+            test_creator_apis()
+        elif choice == '4':
             if run_login_flow():
                 test_all_apis()
-        elif choice == '4':
+        elif choice == '5':
             display_api_menu()
         else:
             print("无效选择，请重试")

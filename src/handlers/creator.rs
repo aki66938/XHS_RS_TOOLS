@@ -128,3 +128,90 @@ pub async fn creator_check_qrcode_status(
         })),
     }
 }
+
+// Import for Creator Info Handlers
+use crate::api::creator::{info, models::{CreatorUserInfo, CreatorHomeInfo}};
+
+/// 4. 获取创作者用户信息
+///
+/// 获取创作者中心用户基础信息
+#[utoipa::path(
+    get,
+    path = "/api/galaxy/user/info",
+    tag = "Creator",
+    responses(
+        (status = 200, description = "User info retrieved", body = CreatorUserInfo)
+    )
+)]
+pub async fn creator_user_info_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    // 1. Get credentials from creator_auth
+    let cookies_result = state.creator_auth.try_get_credentials().await;
+    
+    let cookies = match cookies_result {
+        Ok(Some(creds)) => creds.cookies.clone(),
+        Ok(None) => return Json(serde_json::json!({
+            "success": false,
+            "error": "Not logged in (Creator). Please login first."
+        })).into_response(),
+        Err(e) => return Json(serde_json::json!({
+            "success": false,
+            "error": e.to_string()
+        })).into_response(),
+    };
+    
+    // 2. Call API
+    match info::get_creator_user_info(&cookies).await {
+        Ok(info) => Json(serde_json::json!({
+            "success": true,
+            "data": info
+        })).into_response(),
+        Err(e) => Json(serde_json::json!({
+            "success": false, 
+            "error": e.to_string()
+        })).into_response(),
+    }
+}
+
+/// 5. 获取创作者主页信息
+///
+/// 获取创作者中心个人主页信息
+#[utoipa::path(
+    get,
+    path = "/api/galaxy/creator/home/personal_info",
+    tag = "Creator",
+    responses(
+        (status = 200, description = "Home info retrieved", body = CreatorHomeInfo)
+    )
+)]
+pub async fn creator_home_info_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    // 1. Get credentials from creator_auth
+    let cookies_result = state.creator_auth.try_get_credentials().await;
+    
+    let cookies = match cookies_result {
+        Ok(Some(creds)) => creds.cookies.clone(),
+        Ok(None) => return Json(serde_json::json!({
+            "success": false,
+            "error": "Not logged in (Creator). Please login first."
+        })).into_response(),
+        Err(e) => return Json(serde_json::json!({
+            "success": false,
+            "error": e.to_string()
+        })).into_response(),
+    };
+    
+    // 2. Call API
+    match info::get_creator_home_info(&cookies).await {
+        Ok(info) => Json(serde_json::json!({
+            "success": true,
+            "data": info
+        })).into_response(),
+        Err(e) => Json(serde_json::json!({
+            "success": false, 
+            "error": e.to_string()
+        })).into_response(),
+    }
+}
