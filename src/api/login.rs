@@ -1,10 +1,10 @@
 //! Login API - QR Code Login Flow
 //!
 //! This module handles the XHS QR code login process:
-//! 1. Fetch guest cookies from Python Agent (Playwright)
+//! 1. Fetch guest cookies from Python Agent (nodriver)
 //! 2. Create QR code using official API
 //! 3. Poll QR code status until login success
-//! 4. Store user credentials in MongoDB
+//! 4. Store user credentials in local JSON
 //!
 //! Design Principles:
 //! - Single Responsibility: Each function does one thing
@@ -139,7 +139,7 @@ pub struct PollStatusResponse {
 // Core Functions
 // ============================================================================
 
-/// Fetch guest cookies from Python Agent (uses Playwright internally)
+/// Fetch guest cookies from Python Agent (uses nodriver internally)
 ///
 /// Returns a HashMap of cookies needed for QR code login
 pub async fn fetch_guest_cookies() -> Result<HashMap<String, String>> {
@@ -150,7 +150,7 @@ pub async fn fetch_guest_cookies() -> Result<HashMap<String, String>> {
     
     let response = client
         .get(&url)
-        .timeout(std::time::Duration::from_secs(30))  // Playwright needs time
+        .timeout(std::time::Duration::from_secs(90))  // Browser startup and cookie readiness
         .send()
         .await
         .map_err(|e| anyhow!("Failed to connect to Agent: {}", e))?;
@@ -329,7 +329,8 @@ pub async fn check_qrcode_status(
                 .cloned();
                 
             if let Some(session) = web_session {
-                let mut cookies_to_sync = HashMap::new();
+                let mut cookies_to_sync = cookies.clone();
+                cookies_to_sync.extend(new_cookies.clone());
                 cookies_to_sync.insert("web_session".to_string(), session);
                 
                 match sync_login_cookies(&cookies_to_sync, None).await {

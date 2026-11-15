@@ -6,6 +6,8 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
+.local/
 .env
 .DS_Store
 .vscode/
@@ -28,3 +30,8 @@ doc/feature_fingerprint_browser.md
 cookie.json
 cookie-bak.json
 cookie-creator.json
+
+# Local uploads and interrupted credential writes
+uploads/*
+!uploads/.gitkeep
+cookie*.json.tmp

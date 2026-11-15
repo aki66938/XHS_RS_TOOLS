@@ -39,7 +39,7 @@ pub async fn fetch_creator_guest_cookies() -> Result<HashMap<String, String>> {
     
     let response = client
         .get(&url)
-        .timeout(std::time::Duration::from_secs(45)) // Little extra buffer
+        .timeout(std::time::Duration::from_secs(90)) // Browser startup and cookie readiness
         .send()
         .await
         .map_err(|e| anyhow!("Failed to connect to Agent: {}", e))?;

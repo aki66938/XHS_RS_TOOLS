@@ -1,25 +1,19 @@
-version: '3.8'
-
 services:
-  # Python Agent: 签名服务 + Playwright 浏览器操作
   xhs-agent:
     build:
       context: .
       dockerfile: docker/Dockerfile.agent
-      args:
-        HTTP_PROXY: ${HTTP_PROXY}
-        HTTPS_PROXY: ${HTTPS_PROXY}
-    container_name: xhs-agent
     ports:
-      - "8765:8765"
+      - "127.0.0.1:8765:8765"
     shm_size: 2gb
     restart: unless-stopped
     environment:
-      - HTTP_PROXY=${HTTP_PROXY}
-      - HTTPS_PROXY=${HTTPS_PROXY}
-      - NO_PROXY=localhost,127.0.0.1,::1
+      XHS_BROWSER_PROXY: ${XHS_BROWSER_PROXY:-}
+    volumes:
+      - ./.local:/app/.local
+      - ./uploads:/app/uploads
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8765/health" ]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8765/health"]
       interval: 30s
       timeout: 10s
       retries: 3

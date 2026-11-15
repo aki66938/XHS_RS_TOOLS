@@ -27,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
         match agent_manager::start_agent() {
             Ok(_) => info!("Python Agent started successfully"),
             Err(e) => {
-                warn!("Failed to start Python Agent: {}. Signature generation will fallback to stored signatures or remote agent if configured.", e);
+                warn!("Failed to start Python Agent: {}. Requests requiring the agent may fail until it is started.", e);
             }
         }
     } else {

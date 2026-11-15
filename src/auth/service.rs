@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::auth::{CredentialStorage, UserCredentials};
-use crate::auth::browser::trigger_python_login;
+use crate::auth::browser::trigger_browser_login;
 
 use std::path::PathBuf;
 
@@ -86,7 +86,7 @@ impl AuthService {
         println!("╚════════════════════════════════════════════════════════════╝\n");
         
         // Run Python Playwright script (which saves to cookie.json)
-        trigger_python_login().await?;
+        trigger_browser_login().await?;
         
         info!("Login successful, credentials saved to cookie.json");
         

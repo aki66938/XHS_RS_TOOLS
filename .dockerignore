@@ -1,0 +1,10 @@
+.git
+.venv
+.local
+target
+uploads
+.env
+cookie*.json
+cookie*.json.tmp
+**/__pycache__
+**/*.pyc

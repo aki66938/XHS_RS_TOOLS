@@ -19,7 +19,7 @@ use crate::api::login::{GuestInitResponse, CreateQrCodeResponse, PollStatusRespo
 
 /// 初始化访客登录会话
 ///
-/// 通过 Playwright 获取访客 Cookie，存储到内存中供后续 QR 登录使用
+/// 通过 nodriver 获取访客 Cookie，存储到内存中供后续 QR 登录使用
 #[utoipa::path(
     post,
     path = "/api/auth/guest-init",
